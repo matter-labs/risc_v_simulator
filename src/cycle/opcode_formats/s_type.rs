@@ -25,7 +25,6 @@ impl STypeOpcode {
     #[must_use]
     #[inline(always)]
     pub const fn imm(src: u32) -> u32 {
-        get_bits_and_align_right(src, 7, 5) | 
-        get_bits_and_shift_right(src, 25, 7, 25 - 5)
+        get_bits_and_align_right(src, 7, 5) | get_bits_and_shift_right(src, 25, 7, 25 - 5)
     }
 }

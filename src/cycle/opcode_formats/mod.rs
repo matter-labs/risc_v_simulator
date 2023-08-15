@@ -12,7 +12,6 @@ pub const fn get_rd(src: u32) -> u32 {
     (src >> 7) & 0b00011111
 }
 
-
 pub mod b_type;
 pub mod i_type;
 pub mod j_type;

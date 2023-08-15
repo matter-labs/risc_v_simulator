@@ -14,7 +14,7 @@ impl VectorMemoryImpl {
         assert_eq!(bytes % 4, 0);
         let word_size = bytes / 4;
         Self {
-            inner: vec![0u32; word_size]
+            inner: vec![0u32; word_size],
         }
     }
 }
@@ -23,11 +23,13 @@ impl MemorySource for VectorMemoryImpl {
     #[must_use]
     #[inline(always)]
     fn get(&self, phys_address: u64, access_type: AccessType, trap: &mut u32) -> u32 {
-        if ((phys_address/4) as usize) < self.inner.len() {
-            self.inner[(phys_address/4) as usize]
+        if ((phys_address / 4) as usize) < self.inner.len() {
+            self.inner[(phys_address / 4) as usize]
         } else {
             match access_type {
-                AccessType::Instruction => *trap = TrapReason::InstructionAccessFault.as_register_value(),
+                AccessType::Instruction => {
+                    *trap = TrapReason::InstructionAccessFault.as_register_value()
+                }
                 AccessType::Load => *trap = TrapReason::LoadAccessFault.as_register_value(),
                 AccessType::Store => *trap = TrapReason::StoreOrAMOAccessFault.as_register_value(),
             }
@@ -38,18 +40,19 @@ impl MemorySource for VectorMemoryImpl {
 
     #[inline(always)]
     fn set(&mut self, phys_address: u64, value: u32, access_type: AccessType, trap: &mut u32) {
-        if ((phys_address/4) as usize) < self.inner.len() {
-            self.inner[(phys_address/4) as usize] = value;
+        if ((phys_address / 4) as usize) < self.inner.len() {
+            self.inner[(phys_address / 4) as usize] = value;
         } else {
             match access_type {
-                AccessType::Instruction => *trap = TrapReason::InstructionAccessFault.as_register_value(),
+                AccessType::Instruction => {
+                    *trap = TrapReason::InstructionAccessFault.as_register_value()
+                }
                 AccessType::Load => *trap = TrapReason::LoadAccessFault.as_register_value(),
                 AccessType::Store => *trap = TrapReason::StoreOrAMOAccessFault.as_register_value(),
             }
         }
     }
 }
-
 
 pub trait Timestamp: 'static + Clone + Copy + std::fmt::Debug {
     fn new_cycle_timestamp(self) -> Self;
@@ -79,14 +82,29 @@ impl Timestamp for u32 {
 pub trait MemoryAccessTracer {
     type Timestamp: Timestamp;
 
-    fn add_query(&mut self, phys_address: u64, value: u32, rw_flag: bool, access_type: AccessType, ts: Self::Timestamp, trap: u32);
+    fn add_query(
+        &mut self,
+        phys_address: u64,
+        value: u32,
+        rw_flag: bool,
+        access_type: AccessType,
+        ts: Self::Timestamp,
+        trap: u32,
+    );
 }
 
 impl MemoryAccessTracer for () {
     type Timestamp = u32;
 
     #[inline(always)]
-    fn add_query(&mut self, _phys_address: u64, _value: u32, _rw_flag: bool, _access_type: AccessType, _ts: Self::Timestamp, _trap: u32) {
-
+    fn add_query(
+        &mut self,
+        _phys_address: u64,
+        _value: u32,
+        _rw_flag: bool,
+        _access_type: AccessType,
+        _ts: Self::Timestamp,
+        _trap: u32,
+    ) {
     }
 }

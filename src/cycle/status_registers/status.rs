@@ -165,5 +165,4 @@ impl MStatusRegister {
     pub const fn sd(src: u32) -> u32 {
         get_bit_unaligned(src, 31)
     }
-
 }
