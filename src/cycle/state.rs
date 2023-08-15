@@ -1,10 +1,10 @@
 use std::hint::unreachable_unchecked;
 
-use crate::abstractions::memory::{MemorySource, MemoryAccessTracer, AccessType};
+use super::status_registers::*;
+use crate::abstractions::memory::{AccessType, MemoryAccessTracer, MemorySource};
 use crate::abstractions::MemoryImplementation;
 use crate::mmio::MMIOImplementation;
 use crate::mmu::MMUImplementation;
-use super::status_registers::*;
 
 use crate::utils::*;
 
@@ -36,7 +36,7 @@ impl Mode {
             i if i == Mode::Supervisor as u32 => Mode::Supervisor,
             i if i == Mode::Reserved as u32 => Mode::Reserved,
             i if i == Mode::Machine as u32 => Mode::Machine,
-            _ => {unsafe { unreachable_unchecked() }}
+            _ => unsafe { unreachable_unchecked() },
         }
     }
 }
@@ -44,8 +44,8 @@ impl Mode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct TrapStateRegisters {
     pub status: u32, // status register
-    pub ie: u32, // interrupt-enable register
-    pub ip: u32, // interrupt-pending register
+    pub ie: u32,     // interrupt-enable register
+    pub ip: u32,     // interrupt-pending register
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -60,9 +60,9 @@ pub struct TrapSetupRegisters {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct TrapHandlingRegisters {
     pub scratch: u32, // scratch register for machine trap handlers
-    pub epc: u32, // exception program counter
-    pub cause: u32, // trap cause
-    pub tval: u32, // bad address or instruction
+    pub epc: u32,     // exception program counter
+    pub cause: u32,   // trap cause
+    pub tval: u32,    // bad address or instruction
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -137,9 +137,18 @@ impl RiscV32State {
         let timer_match = u64::MAX;
 
         let machine_mode_trap_data = ModeStatusAndTrapRegisters {
-            state: TrapStateRegisters { status: 0, ie: 0, ip: 0 },
+            state: TrapStateRegisters {
+                status: 0,
+                ie: 0,
+                ip: 0,
+            },
             setup: TrapSetupRegisters { tvec: 0 },
-            handling: TrapHandlingRegisters { scratch: 0, epc: 0, cause: 0, tval: 0 }
+            handling: TrapHandlingRegisters {
+                scratch: 0,
+                epc: 0,
+                cause: 0,
+                tval: 0,
+            },
         };
 
         Self {
@@ -149,7 +158,7 @@ impl RiscV32State {
             cycle_counter,
             timer,
             timer_match,
-            machine_mode_trap_data
+            machine_mode_trap_data,
         }
     }
 
@@ -172,7 +181,7 @@ impl RiscV32State {
         const N: usize,
         M: MemorySource,
         MTR: MemoryAccessTracer,
-        MMU: MMUImplementation<M, MTR, AuxilarySource = MemoryImplementation<M, MTR>>
+        MMU: MMUImplementation<M, MTR, AuxilarySource = MemoryImplementation<M, MTR>>,
     >(
         &'a mut self,
         memory: &'a mut MemoryImplementation<M, MTR>,
@@ -188,9 +197,15 @@ impl RiscV32State {
             // clear WFI
             clear_bit(&mut self.extra_flags.0, ExtraFlags::WAIT_FOR_INTERRUPT_BIT);
             // set interrupt mode pending
-            set_bit(&mut self.machine_mode_trap_data.state.ip, InterruptReason::MachineTimerInterrupt as u32);
+            set_bit(
+                &mut self.machine_mode_trap_data.state.ip,
+                InterruptReason::MachineTimerInterrupt as u32,
+            );
         } else {
-            clear_bit(&mut self.machine_mode_trap_data.state.ip, InterruptReason::MachineTimerInterrupt as u32);
+            clear_bit(
+                &mut self.machine_mode_trap_data.state.ip,
+                InterruptReason::MachineTimerInterrupt as u32,
+            );
         }
 
         if self.extra_flags.get_wait_for_interrupt() != 0 {
@@ -200,13 +215,20 @@ impl RiscV32State {
         let mut pc = self.pc;
         let mut ret_val: u32 = 0;
         let mut trap: u32 = 0;
+        let mut instr: u32 = 0;
 
         // println!("PC = 0x{:08x}", pc);
 
         // interrupt handling, if it's enabled
-        if MStatusRegister::mie(self.machine_mode_trap_data.state.status) != 0 &&
-            test_bit(self.machine_mode_trap_data.state.ip, InterruptReason::MachineTimerInterrupt as u32) &&
-            test_bit(self.machine_mode_trap_data.state.ie, InterruptReason::MachineTimerInterrupt as u32)
+        if MStatusRegister::mie(self.machine_mode_trap_data.state.status) != 0
+            && test_bit(
+                self.machine_mode_trap_data.state.ip,
+                InterruptReason::MachineTimerInterrupt as u32,
+            )
+            && test_bit(
+                self.machine_mode_trap_data.state.ie,
+                InterruptReason::MachineTimerInterrupt as u32,
+            )
         {
             trap = InterruptReason::MachineExternalInterrupt.as_register_value();
             self.pc = self.pc.wrapping_sub(4u32);
@@ -223,13 +245,26 @@ impl RiscV32State {
                     break 'cycle_block;
                 }
                 // we assume no InstructionAccessFault here
-                let instruction_phys_address = mmu.map_virtual_to_physical(pc, current_privilege_mode, AccessType::Instruction, memory, &mut trap);
+                let instruction_phys_address = mmu.map_virtual_to_physical(
+                    pc,
+                    current_privilege_mode,
+                    AccessType::Instruction,
+                    memory,
+                    &mut trap,
+                );
                 if trap != 0 {
                     // error during address translation
                     debug_assert_eq!(trap, TrapReason::InstructionPageFault.as_register_value());
                     break 'cycle_block;
                 }
-                let instr = memory.read(instruction_phys_address, 4, AccessType::Instruction, &mut trap);
+
+                instr = memory.read(
+                    instruction_phys_address,
+                    4,
+                    AccessType::Instruction,
+                    &mut trap,
+                );
+
                 if trap != 0 {
                     // error during address translation
                     debug_assert_eq!(trap, TrapReason::InstructionAccessFault.as_register_value());
@@ -311,7 +346,7 @@ impl RiscV32State {
                             5 => { if (rs1 as i32) >= (rs2 as i32) { pc = dst } },
                             6 => { if rs1 < rs2 { pc = dst } },
                             7 => { if rs1 >= rs2 { pc = dst } },
-                            _ => { 
+                            _ => {
                                 trap = TrapReason::IllegalInstruction.as_register_value();
                                 break 'cycle_block;
                             },
@@ -319,6 +354,15 @@ impl RiscV32State {
                     },
                     0b0000011 => {
                         // LOAD
+
+                        if rd == 0 {
+                            // Exception raised: loads with a destination of x0 must still raise 
+                            // any exceptions and action any other side effects 
+                            // even though the load value is discarded
+                            trap = TrapReason::IllegalInstruction.as_register_value();
+                            break 'cycle_block;
+                        }
+
                         let mut imm = ITypeOpcode::imm(instr);
                         sign_extend(&mut imm, 12);
 
@@ -328,16 +372,6 @@ impl RiscV32State {
 
                         // println!("Load into x{:02} from 0x{:08x} at PC = 0x{:08x}", rd, virtual_address, pc);
 
-                        // load operand
-
-                        // We had a trap here, but it's just TOO slow for any interesting program without modifications
-                        // to trap this, and then simulate unaligned load in EH
-
-                        // if virtual_address & 0x3 != 0 {
-                        //     trap = TrapReason::LoadAddressMisaligned.as_register_value();
-                        //     break 'cycle_block;
-                        // }
-
                         // we formally access it once, but most likely full memory access
                         // will be abstracted away into external interface hiding memory translation too
                         let operand_phys_address = mmu.map_virtual_to_physical(virtual_address, current_privilege_mode, AccessType::Load, memory, &mut trap);
@@ -346,12 +380,6 @@ impl RiscV32State {
                             debug_assert_eq!(trap, TrapReason::LoadPageFault.as_register_value());
                             break 'cycle_block;
                         }
-
-                        // // same - we are good without it
-                        // if operand_phys_address & 0x3 != 0 {
-                        //     trap = TrapReason::LoadAddressMisaligned.as_register_value();
-                        //     break 'cycle_block;
-                        // }
 
                         // try MMIO first
                         if let Ok(val) = mmio.read(operand_phys_address, &mut trap) {
@@ -370,9 +398,12 @@ impl RiscV32State {
                                         2 => 4,
                                         _ => unsafe {unreachable_unchecked()}
                                     };
+                                    // Memory implementation should handle read in full. For now we only use one
+                                    // that doesn't step over 4 byte boundary ever, meaning even though formal address is not 4 byte aligned,
+                                    // loads of u8/u16/u32 are still "aligned"
                                     let operand = memory.read(operand_phys_address, num_bytes, AccessType::Load, &mut trap);
                                     if trap != 0 {
-                                        debug_assert_eq!(trap, TrapReason::LoadAccessFault.as_register_value());
+                                        debug_assert_eq!(trap, TrapReason::LoadAddressMisaligned.as_register_value());
                                         break 'cycle_block;
                                     }
                                     // now depending on the type of load we extend it
@@ -409,12 +440,6 @@ impl RiscV32State {
 
                         // store operand rs2
 
-                        // Same logic as in LOAD
-                        // if virtual_address & 0x3 != 0 {
-                        //     trap = TrapReason::StoreOrAMOAddressMisaligned.as_register_value();
-                        //     break 'cycle_block;
-                        // }
-
                         // we formally access it once, but most likely full memory access
                         // will be abstracted away into external interface hiding memory translation too
                         let operand_phys_address = mmu.map_virtual_to_physical(virtual_address, current_privilege_mode, AccessType::Store, memory, &mut trap);
@@ -422,11 +447,6 @@ impl RiscV32State {
                             debug_assert_eq!(trap, TrapReason::StoreOrAMOPageFault.as_register_value());
                             break 'cycle_block;
                         }
-
-                        // if operand_phys_address & 0x3 != 0 {
-                        //     trap = TrapReason::StoreOrAMOAddressMisaligned.as_register_value();
-                        //     break 'cycle_block;
-                        // }
 
                         if let Ok(_) = mmio.write(operand_phys_address, rs2, &mut trap) {
                             if trap != 0 {
@@ -438,10 +458,11 @@ impl RiscV32State {
                             match funct3 {
                                 a @ 0 | a @ 1 | a @ 2 => {
                                     let store_length = 1 << a;
+                                    // memory handles the write in full, whether it's aligned or not, or whatever
                                     memory.write(operand_phys_address, rs2, store_length, AccessType::Store, &mut trap);
                                     if trap != 0 {
                                         // error during address translation
-                                        debug_assert_eq!(trap, TrapReason::StoreOrAMOAccessFault.as_register_value());
+                                        debug_assert_eq!(trap, TrapReason::StoreOrAMOAddressMisaligned.as_register_value());
                                         break 'cycle_block;
                                     }
                                 },
@@ -746,15 +767,14 @@ impl RiscV32State {
                 pc = pc.wrapping_add(4u32); // PC points to where the PC will return!
             } else {
                 // actually a trap
-                // println!("Trap reason = {:?}", TrapReason::from_register_value(trap));
-                self.machine_mode_trap_data.handling.cause = trap;
-                // TODO: here we have a freedom of what to put into tval. We pay put opcode
-                // for invalid opcode, and memory address for e.g. pagefault
-                self.machine_mode_trap_data.handling.tval = if trap > 5 && trap < 9 {
-                    ret_val
-                } else {
+                println!(
+                    "Trap reason = {:?} at pc = 0x{:08x}",
+                    TrapReason::from_register_value(trap),
                     pc
-                };
+                );
+                self.machine_mode_trap_data.handling.cause = trap;
+                // TODO: here we have a freedom of what to put into tval. We place opcode value now, because PC will be placed into EPC below
+                self.machine_mode_trap_data.handling.tval = instr;
             }
             // println!("Trapping at pc = 0x{:08x} into PC = 0x{:08x}. MECP is set to 0x{:08x}", pc, self.machine_mode_trap_data.setup.tvec, pc);
             // self.pretty_dump();
@@ -766,7 +786,7 @@ impl RiscV32State {
             // On an interrupt, the system moves current MIE into MPIE
             let mie = MStatusRegister::mie_aligned_bit(self.machine_mode_trap_data.state.status);
             MStatusRegister::set_mpie_to_value(&mut self.machine_mode_trap_data.state.status, mie);
-            
+
             // go to trap vector
             pc = self.machine_mode_trap_data.setup.tvec;
 
@@ -778,7 +798,10 @@ impl RiscV32State {
     }
 
     pub fn pretty_dump(&self) {
-        println!("PC = 0x{:08x}, RA = 0x{:08x}, SP = 0x{:08x}, GP = 0x{:08x}", self.pc, self.registers[1], self.registers[2], self.registers[3]);
+        println!(
+            "PC = 0x{:08x}, RA = 0x{:08x}, SP = 0x{:08x}, GP = 0x{:08x}",
+            self.pc, self.registers[1], self.registers[2], self.registers[3]
+        );
         for chunk in self.registers.iter().enumerate().array_chunks::<4>() {
             for (idx, reg) in chunk.iter() {
                 print!("x{:02} = 0x{:08x}, ", idx, reg);
@@ -791,12 +814,12 @@ impl RiscV32State {
         'a,
         M: MemorySource,
         MTR: MemoryAccessTracer,
-        MMU: MMUImplementation<M, MTR, AuxilarySource = MemoryImplementation<M, MTR>>
+        MMU: MMUImplementation<M, MTR, AuxilarySource = MemoryImplementation<M, MTR>>,
     >(
         &'a self,
         memory: &'a mut MemoryImplementation<M, MTR>,
-        mmu: &'a mut MMU
-    ){
+        mmu: &'a mut MMU,
+    ) {
         let sp = self.registers[2];
         let mut trap = 0;
         let current_privilege_mode = self.extra_flags.get_current_mode();
@@ -804,7 +827,13 @@ impl RiscV32State {
             for j in 0..4 {
                 let offset = i * 4 + j;
                 let addr = sp.wrapping_add(offset * 4);
-                let addr = mmu.map_virtual_to_physical(addr, current_privilege_mode, AccessType::Load, memory, &mut trap);
+                let addr = mmu.map_virtual_to_physical(
+                    addr,
+                    current_privilege_mode,
+                    AccessType::Load,
+                    memory,
+                    &mut trap,
+                );
                 let value = memory.read(addr, 4, AccessType::Load, &mut trap);
                 print!("SP-{} = 0x{:08x}, ", offset * 4, value);
             }

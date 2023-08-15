@@ -49,21 +49,35 @@ impl TrapReason {
     #[inline(always)]
     pub fn from_register_value(value: u32) -> Self {
         match value {
-            a if a == TrapReason::InstructionAddressMisaligned as u32 => TrapReason::InstructionAddressMisaligned,
-            a if a == TrapReason::InstructionAccessFault as u32 => TrapReason::InstructionAccessFault,
+            a if a == TrapReason::InstructionAddressMisaligned as u32 => {
+                TrapReason::InstructionAddressMisaligned
+            }
+            a if a == TrapReason::InstructionAccessFault as u32 => {
+                TrapReason::InstructionAccessFault
+            }
             a if a == TrapReason::IllegalInstruction as u32 => TrapReason::IllegalInstruction,
             a if a == TrapReason::Breakpoint as u32 => TrapReason::Breakpoint,
             a if a == TrapReason::LoadAddressMisaligned as u32 => TrapReason::LoadAddressMisaligned,
             a if a == TrapReason::LoadAccessFault as u32 => TrapReason::LoadAccessFault,
-            a if a == TrapReason::StoreOrAMOAddressMisaligned as u32 => TrapReason::StoreOrAMOAddressMisaligned,
+            a if a == TrapReason::StoreOrAMOAddressMisaligned as u32 => {
+                TrapReason::StoreOrAMOAddressMisaligned
+            }
             a if a == TrapReason::StoreOrAMOAccessFault as u32 => TrapReason::StoreOrAMOAccessFault,
-            a if a == TrapReason::EnvironmentCallFromUMode as u32 => TrapReason::EnvironmentCallFromUMode,
-            a if a == TrapReason::EnvironmentCallFromSMode as u32 => TrapReason::EnvironmentCallFromSMode,
-            a if a == TrapReason::EnvironmentCallFromMMode as u32 => TrapReason::EnvironmentCallFromMMode,
+            a if a == TrapReason::EnvironmentCallFromUMode as u32 => {
+                TrapReason::EnvironmentCallFromUMode
+            }
+            a if a == TrapReason::EnvironmentCallFromSMode as u32 => {
+                TrapReason::EnvironmentCallFromSMode
+            }
+            a if a == TrapReason::EnvironmentCallFromMMode as u32 => {
+                TrapReason::EnvironmentCallFromMMode
+            }
             a if a == TrapReason::InstructionPageFault as u32 => TrapReason::InstructionPageFault,
             a if a == TrapReason::LoadPageFault as u32 => TrapReason::LoadPageFault,
             a if a == TrapReason::StoreOrAMOPageFault as u32 => TrapReason::StoreOrAMOPageFault,
-            _ => {panic!("unknown trap reason")},
+            _ => {
+                panic!("unknown trap reason")
+            }
         }
     }
 }

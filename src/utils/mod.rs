@@ -33,7 +33,7 @@ pub const fn get_bit_unaligned(src: u32, bit: u32) -> u32 {
 
 #[inline(always)]
 pub const fn sign_extend(dst: &mut u32, total_bits: u32) {
-    if *dst & (1 << (total_bits-1)) != 0 {
+    if *dst & (1 << (total_bits - 1)) != 0 {
         *dst |= !((1 << total_bits) - 1); // put 1s into higher bits
     }
 }
@@ -70,7 +70,7 @@ pub const fn get_bits_and_shift_left(src: u32, from_bit: u32, num_bits: u32, shi
 pub const fn sign_extend_16(src: u32) -> u32 {
     let mut value = src & 0x0000ffff;
     sign_extend(&mut value, 16);
-    
+
     value
 }
 
@@ -79,7 +79,7 @@ pub const fn sign_extend_16(src: u32) -> u32 {
 pub const fn sign_extend_8(src: u32) -> u32 {
     let mut value = src & 0x000000ff;
     sign_extend(&mut value, 8);
-    
+
     value
 }
 

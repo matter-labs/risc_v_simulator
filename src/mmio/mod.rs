@@ -8,7 +8,7 @@ pub trait MMIOSource {
 }
 
 pub struct MMIOImplementation<'a, const N: usize> {
-    pub sources: [(std::ops::Range<u64>, &'a mut dyn MMIOSource); N]
+    pub sources: [(std::ops::Range<u64>, &'a mut dyn MMIOSource); N],
 }
 
 impl<'a, const N: usize> MMIOImplementation<'a, N> {
@@ -19,7 +19,9 @@ impl<'a, const N: usize> MMIOImplementation<'a, N> {
         for source in sources.iter_mut() {
             let range = source.address_range();
             for other_range in checker.iter() {
-                if other_range.contains(&range.start) || (range.end > 0 && other_range.contains(&(range.end - 1))) {
+                if other_range.contains(&range.start)
+                    || (range.end > 0 && other_range.contains(&(range.end - 1)))
+                {
                     panic!("Intersecting MMIO ranges");
                 }
             }
@@ -32,7 +34,7 @@ impl<'a, const N: usize> MMIOImplementation<'a, N> {
 
         Self {
             #[allow(unreachable_code)]
-            sources: unsafe { inners.try_into().unwrap_unchecked() }
+            sources: unsafe { inners.try_into().unwrap_unchecked() },
         }
     }
 

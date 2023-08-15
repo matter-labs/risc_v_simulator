@@ -31,7 +31,7 @@ impl MMIOSource for QuasiUART {
         // }
         self.buffer.extend(value.to_le_bytes());
         let len = self.buffer.len();
-        for idx in (len-4)..len {
+        for idx in (len - 4)..len {
             if self.buffer[idx] == 0 {
                 // c-style string can be made
                 let mut buffer = std::mem::replace(&mut self.buffer, vec![]);
