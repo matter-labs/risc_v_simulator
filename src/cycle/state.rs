@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::hint::unreachable_unchecked;
 
 use super::status_registers::*;
@@ -111,6 +112,27 @@ impl ExtraFlags {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct StateTracer {
+    pub tracer: HashMap<usize, RiscV32State>
+}
+
+impl StateTracer {
+    pub fn new() -> Self {
+        Self {
+            tracer: HashMap::new(),
+        }
+    }
+
+    pub fn insert(&mut self, idx: usize, state: RiscV32State) {
+        self.tracer.insert(idx, state);
+    }
+
+    pub fn get(&self, idx: usize) -> Option<&RiscV32State> {
+        self.tracer.get(&idx)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RiscV32State {
     pub registers: [u32; NUM_REGISTERS],
@@ -122,6 +144,8 @@ pub struct RiscV32State {
     pub timer_match: u64,
 
     pub machine_mode_trap_data: ModeStatusAndTrapRegisters,
+
+    pub sapt: u32 // for debugging
 }
 
 impl RiscV32State {
@@ -151,6 +175,8 @@ impl RiscV32State {
             },
         };
 
+        let sapt = 0u32;
+
         Self {
             registers,
             pc,
@@ -159,6 +185,7 @@ impl RiscV32State {
             timer,
             timer_match,
             machine_mode_trap_data,
+            sapt,
         }
     }
 
@@ -284,13 +311,14 @@ impl RiscV32State {
                 let bp = 0x0;
                 // let bp = 0x0100045c;
 
-                if pc == bp {
-                    println!("Breakpoint at 0x{:08x}", bp);
-                    self.pretty_dump();
-                    self.stack_dump(memory, mmu);
-                } else {
-                    // println!("Pc = 0x{:08x}", pc);
-                }
+                // if pc == bp {
+                //     println!("Breakpoint at 0x{:08x}", bp);
+                //     self.pretty_dump();
+                //     self.stack_dump(memory, mmu);
+                // } else {
+                //     // println!("Pc = 0x{:08x}", pc);
+                // }
+                // println!("Pc = 0x{:08x}; insn = 0x{:08x}", pc, instr);
 
                 match instr & LOWEST_7_BITS_MASK {
                     0b0110111 => {
@@ -795,6 +823,9 @@ impl RiscV32State {
         }
 
         self.pc = pc;
+
+        // for debugging
+        self.sapt = mmu.read_sapt(current_privilege_mode, &mut trap);
     }
 
     pub fn pretty_dump(&self) {

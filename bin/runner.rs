@@ -9,6 +9,7 @@ pub fn main() {
     // let path = &args[1];
 
     let path = "../zk_os/app.bin";
+    // let path = "../picorv32/firmware/firmware.bin";
 
     let mut file = std::fs::File::open(path).expect("must open provided file");
     let mut buffer = vec![];

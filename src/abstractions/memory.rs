@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::cycle::status_registers::TrapReason;
 
 pub trait MemorySource {
@@ -106,5 +108,50 @@ impl MemoryAccessTracer for () {
         _ts: Self::Timestamp,
         _trap: u32,
     ) {
+    }
+}
+
+pub struct MemoryAccessTracerImpl {
+    pub instruction_trace: HashMap<usize, u32>,
+    pub memory_trace: HashMap<usize, (u64, u32, bool, u32)>,
+}
+
+impl MemoryAccessTracerImpl {
+    pub fn new() -> Self {
+        Self {
+            instruction_trace: HashMap::new(),
+            memory_trace: HashMap::new(),
+        }
+    }
+
+    pub fn get(&self, ts: usize) -> (Option<u32>, Option<(u64, u32, bool, u32)>) {
+        (
+            self.instruction_trace.get(&ts).copied(),
+            self.memory_trace.get(&ts).copied(),
+        )
+    }
+}
+
+impl MemoryAccessTracer for MemoryAccessTracerImpl {
+    type Timestamp = u32;
+
+    #[inline(always)]
+    fn add_query(
+        &mut self,
+        phys_address: u64,
+        value: u32,
+        rw_flag: bool,
+        access_type: AccessType,
+        ts: Self::Timestamp,
+        trap: u32,
+    ) {
+        match access_type {
+            AccessType::Instruction => {
+                self.instruction_trace.insert(ts as usize, value);
+            }
+            _ => {
+                self.memory_trace.insert(ts as usize, (phys_address, value, rw_flag, trap));
+            }
+        }
     }
 }
