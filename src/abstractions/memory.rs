@@ -8,7 +8,7 @@ pub trait MemorySource {
 }
 
 pub struct VectorMemoryImpl {
-    pub(crate) inner: Vec<u32>,
+    pub inner: Vec<u32>,
 }
 
 impl VectorMemoryImpl {
