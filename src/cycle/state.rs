@@ -292,6 +292,8 @@ impl RiscV32State {
                     &mut trap,
                 );
 
+                println!("PC = 0x{:08x}, instr = 0x{:08x}", pc, instr);
+
                 if trap != 0 {
                     // error during address translation
                     debug_assert_eq!(trap, TrapReason::InstructionAccessFault.as_register_value());
@@ -700,7 +702,8 @@ impl RiscV32State {
                                 0x343 => self.machine_mode_trap_data.handling.tval = write_val, // mtval
                                 0x344 => self.machine_mode_trap_data.state.ip = write_val, // mip
                                 _ => {
-                                    // do nothing. Later on we can consider trapping
+                                    trap = TrapReason::IllegalInstruction.as_register_value();
+                                    break 'cycle_block;
                                 }
                             }
 
@@ -826,6 +829,8 @@ impl RiscV32State {
 
         // for debugging
         self.sapt = mmu.read_sapt(current_privilege_mode, &mut trap);
+
+        println!("end of cycle: PC = 0x{:08x}, trap = 0x{:08x}, interrupt = {:?}", self.pc, trap, trap & INTERRUPT_MASK != 0);
     }
 
     pub fn pretty_dump(&self) {

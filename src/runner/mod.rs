@@ -62,7 +62,7 @@ pub fn run_simulator_with_traces(os_image: Vec<u8>, cycles: usize) -> (StateTrac
     let mut memory = VectorMemoryImpl::new_for_byte_size(1 << 32); // use full RAM
     for (word, dst) in os_image
         .array_chunks::<4>()
-        .zip(memory.inner[((DEFAULT_ENTRY_POINT / 4) as usize)..].iter_mut())
+        .zip(memory.inner[((CUSTOM_ENTRY_POINT / 4) as usize)..].iter_mut())
     {
         *dst = u32::from_le_bytes(*word);
     }
@@ -89,6 +89,7 @@ pub fn run_simulator_with_traces(os_image: Vec<u8>, cycles: usize) -> (StateTrac
     for i in 0..cycles {
         // state.pretty_dump();
         state.cycle(&mut memory, &mut mmu, &mut mmio);
+        println!("mtvec: {:?}", state.machine_mode_trap_data.setup.tvec);
         state_tracer.insert(i+1, state);
     }
 
