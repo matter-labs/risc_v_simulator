@@ -28,7 +28,7 @@ pub fn run_simple_simulator(os_image: Vec<u8>, cycles: usize) {
     // let mut mmu = SimpleMMU::default();
 
     use crate::mmu::NoMMU;
-    let mut mmu = NoMMU;
+    let mut mmu = NoMMU { sapt: state.sapt };
 
     let quasi_uart = QuasiUART {
         oracle: VecDeque::new(),
@@ -70,7 +70,7 @@ pub fn run_simulator_with_traces(os_image: Vec<u8>, cycles: usize) -> (StateTrac
     // let mut mmu = SimpleMMU::default();
 
     use crate::mmu::NoMMU;
-    let mut mmu = NoMMU;
+    let mut mmu = NoMMU { sapt: state.sapt };
 
     let quasi_uart = QuasiUART {
         oracle: VecDeque::new(),

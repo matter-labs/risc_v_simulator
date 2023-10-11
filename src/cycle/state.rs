@@ -11,7 +11,10 @@ use crate::utils::*;
 
 use super::opcode_formats::*;
 
+use rand::Rng;
+
 pub const NUM_REGISTERS: usize = 32;
+pub const MAX_MEMORY_OPS_PER_CYCLE: u32 = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
@@ -189,6 +192,54 @@ impl RiscV32State {
         }
     }
 
+    pub fn new_random(initial_pc: u32, is_user_mode: bool, is_halted: bool) -> Self {
+        let mut rng = rand::thread_rng();
+
+        let mut extra_flags = ExtraFlags(0u32);
+        extra_flags.set_mode(if is_user_mode {Mode::User} else {Mode::Machine});
+        if is_halted {
+            extra_flags.set_wait_for_interrupt_bit()
+        }
+
+        let cycle_counter = 0u64;
+        let timer = 0u64;
+        let timer_match = u64::MAX;
+
+        let mut status = rng.gen();
+        MStatusRegister::set_mpp_to_machine(&mut status);
+
+        let machine_mode_trap_data = ModeStatusAndTrapRegisters {
+            state: TrapStateRegisters {
+                status,
+                ie: rng.gen(),
+                ip: rng.gen(),
+            },
+            setup: TrapSetupRegisters { tvec: rng.gen() },
+            handling: TrapHandlingRegisters {
+                scratch: rng.gen(),
+                epc: rng.gen::<u32>() & (u32::MAX - 3),
+                cause: rng.gen(),
+                tval: rng.gen(),
+            },
+        };
+
+        let mut state = RiscV32State {
+            registers: std::array::from_fn(|i| if i > 0 {rng.gen()} else {0} ),
+            pc: initial_pc,
+            extra_flags,
+        
+            cycle_counter,
+            timer,
+            timer_match,
+        
+            machine_mode_trap_data,
+        
+            sapt: rng.gen()
+        };
+
+        state
+    }
+
     #[must_use]
     #[inline(always)]
     pub const fn get_register(&self, reg_idx: u32) -> u32 {
@@ -215,62 +266,42 @@ impl RiscV32State {
         mmu: &'a mut MMU,
         mmio: &'a mut MMIOImplementation<'b, N>,
     ) {
-        // increment cycle
-        self.timer = self.timer.wrapping_add(1u64);
-        let current_privilege_mode = self.extra_flags.get_current_mode();
-        // timer interrupt. We assume timer to be just a reflection of the cycle
-        if self.timer > self.timer_match {
-            self.extra_flags.clear_wait_for_interrupt_bit();
-            // clear WFI
-            clear_bit(&mut self.extra_flags.0, ExtraFlags::WAIT_FOR_INTERRUPT_BIT);
-            // set interrupt mode pending
-            set_bit(
-                &mut self.machine_mode_trap_data.state.ip,
-                InterruptReason::MachineTimerInterrupt as u32,
-            );
-        } else {
-            clear_bit(
-                &mut self.machine_mode_trap_data.state.ip,
-                InterruptReason::MachineTimerInterrupt as u32,
-            );
-        }
+        let mem_queries_per_cycle = MMU::NUM_RAW_MEM_ACCESSES_PER_INVOCATION * MAX_MEMORY_OPS_PER_CYCLE;
+        memory.set_queries_counter(mem_queries_per_cycle * self.cycle_counter as u32);
+        self.cycle_counter += 1;
 
         if self.extra_flags.get_wait_for_interrupt() != 0 {
             return;
         }
 
+        let current_privilege_mode = self.extra_flags.get_current_mode();
         let mut pc = self.pc;
         let mut ret_val: u32 = 0;
-        let mut trap: u32 = 0;
+        let mut trap = TrapReason::NoTrap;
         let mut instr: u32 = 0;
 
         // println!("PC = 0x{:08x}", pc);
 
         // interrupt handling, if it's enabled
-        if MStatusRegister::mie(self.machine_mode_trap_data.state.status) != 0
-            && test_bit(
-                self.machine_mode_trap_data.state.ip,
-                InterruptReason::MachineTimerInterrupt as u32,
-            )
-            && test_bit(
-                self.machine_mode_trap_data.state.ie,
-                InterruptReason::MachineTimerInterrupt as u32,
-            )
+        // if MStatusRegister::mie(self.machine_mode_trap_data.state.status) != 0
+        //     && test_bit(
+        //         self.machine_mode_trap_data.state.ip,
+        //         InterruptReason::MachineTimerInterrupt as u32,
+        //     )
+        //     && test_bit(
+        //         self.machine_mode_trap_data.state.ie,
+        //         InterruptReason::MachineTimerInterrupt as u32,
+        //     )
+        // {
+        //     trap = InterruptReason::MachineExternalInterrupt.as_register_value();
+        //     self.pc = self.pc.wrapping_sub(4u32);
+        //     if trap > 0 {
+        //         println!("we are super lucky to hit this!");
+        //     }
+        //} else {
         {
-            trap = InterruptReason::MachineExternalInterrupt.as_register_value();
-            self.pc = self.pc.wrapping_sub(4u32);
-        } else {
             'cycle_block: {
-                self.cycle_counter += 1;
-                memory.notify_new_cycle();
-
                 // normal cycle
-                // check PC is aligned
-                if pc & 0x3 != 0 {
-                    // unaligned PC
-                    trap = TrapReason::InstructionAddressMisaligned.as_register_value();
-                    break 'cycle_block;
-                }
                 // we assume no InstructionAccessFault here
                 let instruction_phys_address = mmu.map_virtual_to_physical(
                     pc,
@@ -279,9 +310,9 @@ impl RiscV32State {
                     memory,
                     &mut trap,
                 );
-                if trap != 0 {
+                if trap.is_a_trap() {
                     // error during address translation
-                    debug_assert_eq!(trap, TrapReason::InstructionPageFault.as_register_value());
+                    debug_assert_eq!(trap, TrapReason::InstructionPageFault);
                     break 'cycle_block;
                 }
 
@@ -294,9 +325,11 @@ impl RiscV32State {
 
                 println!("PC = 0x{:08x}, instr = 0x{:08x}", pc, instr);
 
-                if trap != 0 {
+                if trap.is_a_trap() {
                     // error during address translation
-                    debug_assert_eq!(trap, TrapReason::InstructionAccessFault.as_register_value());
+                    debug_assert_eq!(
+                        trap.as_register_value(), TrapReason::InstructionAccessFault.as_register_value()
+                    );
                     break 'cycle_block;
                 }
                 // decode the instruction and perform cycle
@@ -307,20 +340,7 @@ impl RiscV32State {
                 // note on all the PC operations below: if we modify PC in the opcode,
                 // we subtract 4 from it, to later on add 4 once at the end of the loop. For MOST
                 // of the opcodes it makes sense to shorten the opcode body
-
                 const LOWEST_7_BITS_MASK: u32 = 0x7f;
-
-                let bp = 0x0;
-                // let bp = 0x0100045c;
-
-                // if pc == bp {
-                //     println!("Breakpoint at 0x{:08x}", bp);
-                //     self.pretty_dump();
-                //     self.stack_dump(memory, mmu);
-                // } else {
-                //     // println!("Pc = 0x{:08x}", pc);
-                // }
-                // println!("Pc = 0x{:08x}; insn = 0x{:08x}", pc, instr);
 
                 match instr & LOWEST_7_BITS_MASK {
                     0b0110111 => {
@@ -369,6 +389,7 @@ impl RiscV32State {
                         rd = 0;
                         let dst = pc.wrapping_add(imm).wrapping_sub(4u32);
                         let funct3 = BTypeOpcode::funct3(instr);
+    
                         match funct3 {
                             0 => { if rs1 == rs2 { pc = dst } },
                             1 => { if rs1 != rs2 { pc = dst } },
@@ -377,7 +398,7 @@ impl RiscV32State {
                             6 => { if rs1 < rs2 { pc = dst } },
                             7 => { if rs1 >= rs2 { pc = dst } },
                             _ => {
-                                trap = TrapReason::IllegalInstruction.as_register_value();
+                                trap = TrapReason::IllegalInstruction;
                                 break 'cycle_block;
                             },
                         }
@@ -389,7 +410,7 @@ impl RiscV32State {
                             // Exception raised: loads with a destination of x0 must still raise 
                             // any exceptions and action any other side effects 
                             // even though the load value is discarded
-                            trap = TrapReason::IllegalInstruction.as_register_value();
+                            trap = TrapReason::IllegalInstruction;
                             break 'cycle_block;
                         }
 
@@ -405,15 +426,15 @@ impl RiscV32State {
                         // we formally access it once, but most likely full memory access
                         // will be abstracted away into external interface hiding memory translation too
                         let operand_phys_address = mmu.map_virtual_to_physical(virtual_address, current_privilege_mode, AccessType::Load, memory, &mut trap);
-                        if trap != 0 {
+                        if trap.is_a_trap() {
                             // error during address translation
-                            debug_assert_eq!(trap, TrapReason::LoadPageFault.as_register_value());
+                            debug_assert_eq!(trap, TrapReason::LoadPageFault);
                             break 'cycle_block;
                         }
 
                         // try MMIO first
                         if let Ok(val) = mmio.read(operand_phys_address, &mut trap) {
-                            if trap != 0 {
+                            if trap.is_a_trap() {
                                 break 'cycle_block;
                             }
                             ret_val = val;
@@ -431,9 +452,11 @@ impl RiscV32State {
                                     // Memory implementation should handle read in full. For now we only use one
                                     // that doesn't step over 4 byte boundary ever, meaning even though formal address is not 4 byte aligned,
                                     // loads of u8/u16/u32 are still "aligned"
-                                    let operand = memory.read(operand_phys_address, num_bytes, AccessType::Load, &mut trap);
-                                    if trap != 0 {
-                                        debug_assert_eq!(trap, TrapReason::LoadAddressMisaligned.as_register_value());
+                                    let operand = memory.read(
+                                        operand_phys_address, num_bytes, AccessType::Load, &mut trap
+                                    );
+                                    if trap.is_a_trap() {
+                                        debug_assert_eq!(trap, TrapReason::LoadAddressMisaligned);
                                         break 'cycle_block;
                                     }
                                     // now depending on the type of load we extend it
@@ -447,7 +470,7 @@ impl RiscV32State {
                                     };
                                 },
                                 _ => {
-                                    trap = TrapReason::IllegalInstruction.as_register_value();
+                                    trap = TrapReason::IllegalInstruction;
                                     break 'cycle_block;
                                 },
                             }
@@ -473,13 +496,13 @@ impl RiscV32State {
                         // we formally access it once, but most likely full memory access
                         // will be abstracted away into external interface hiding memory translation too
                         let operand_phys_address = mmu.map_virtual_to_physical(virtual_address, current_privilege_mode, AccessType::Store, memory, &mut trap);
-                        if trap != 0 {
-                            debug_assert_eq!(trap, TrapReason::StoreOrAMOPageFault.as_register_value());
+                        if trap.is_a_trap() {
+                            debug_assert_eq!(trap, TrapReason::StoreOrAMOPageFault);
                             break 'cycle_block;
                         }
 
                         if let Ok(_) = mmio.write(operand_phys_address, rs2, &mut trap) {
-                            if trap != 0 {
+                            if trap.is_a_trap() {
                                 break 'cycle_block;
                             }
                         } else {
@@ -490,14 +513,14 @@ impl RiscV32State {
                                     let store_length = 1 << a;
                                     // memory handles the write in full, whether it's aligned or not, or whatever
                                     memory.write(operand_phys_address, rs2, store_length, AccessType::Store, &mut trap);
-                                    if trap != 0 {
+                                    if trap.is_a_trap() {
                                         // error during address translation
-                                        debug_assert_eq!(trap, TrapReason::StoreOrAMOAddressMisaligned.as_register_value());
+                                        debug_assert_eq!(trap, TrapReason::StoreOrAMOAddressMisaligned);
                                         break 'cycle_block;
                                     }
                                 },
                                 _ => {
-                                    trap = TrapReason::IllegalInstruction.as_register_value();
+                                    trap = TrapReason::IllegalInstruction;
                                     break 'cycle_block;
                                 },
                             }
@@ -638,7 +661,7 @@ impl RiscV32State {
                         let csr_privilege_mode = get_bits_and_align_right(csr_number, 8, 2);
                         let csr_privilege_mode = Mode::from_proper_bit_value(csr_privilege_mode);
                         if csr_privilege_mode.as_register_value() > current_privilege_mode.as_register_value() {
-                            trap = TrapReason::IllegalInstruction.as_register_value();
+                            trap = TrapReason::IllegalInstruction;
                             break 'cycle_block;
                         }
 
@@ -654,7 +677,7 @@ impl RiscV32State {
                                 0x180 => {
                                     // satp
                                     ret_val = mmu.read_sapt(current_privilege_mode, &mut trap);
-                                    if trap != 0 {
+                                    if trap.is_a_trap() {
                                         break 'cycle_block;
                                     }
                                 },
@@ -689,7 +712,7 @@ impl RiscV32State {
                                 0x180 => {
                                     // satp
                                     mmu.write_sapt(write_val, current_privilege_mode, &mut trap);
-                                    if trap != 0 {
+                                    if trap.is_a_trap() {
                                         break 'cycle_block;
                                     }
                                 },
@@ -702,7 +725,7 @@ impl RiscV32State {
                                 0x343 => self.machine_mode_trap_data.handling.tval = write_val, // mtval
                                 0x344 => self.machine_mode_trap_data.state.ip = write_val, // mip
                                 _ => {
-                                    trap = TrapReason::IllegalInstruction.as_register_value();
+                                    trap = TrapReason::IllegalInstruction;
                                     break 'cycle_block;
                                 }
                             }
@@ -714,12 +737,12 @@ impl RiscV32State {
                             // mainly we support WFI, MRET, ECALL and EBREAK
                             if csr_number == 0x105 {
                                 // WFI
-                                MStatusRegister::set_mie(&mut self.machine_mode_trap_data.state.status);
+                                //MStatusRegister::set_mie(&mut self.machine_mode_trap_data.state.status);
                                 self.extra_flags.set_wait_for_interrupt_bit();
                                 self.pc = pc.wrapping_add(4u32);
-                                println!("WFI");
                                 return;
-                            } else if csr_number & 0xff == 0x02 {
+                            } else if csr_number == 0x302 {
+                                println!("MRET PATH: {}", trap.as_register_value());
                                 // MRET
                                 let existing_mstatus = self.machine_mode_trap_data.state.status;
 
@@ -744,43 +767,44 @@ impl RiscV32State {
                                     0 => {
                                         // ECALL
                                         trap = match current_privilege_mode {
-                                            Mode::Machine => TrapReason::EnvironmentCallFromMMode.as_register_value(),
-                                            Mode::User => TrapReason::EnvironmentCallFromUMode.as_register_value(),
-                                            _ => TrapReason::IllegalInstruction.as_register_value(),
+                                            Mode::Machine => TrapReason::EnvironmentCallFromMMode,
+                                            Mode::User => TrapReason::EnvironmentCallFromUMode,
+                                            _ => TrapReason::IllegalInstruction,
                                         };
 
                                         break 'cycle_block;
                                     },
                                     1 => {
                                         // EBREAK
-                                        trap = TrapReason::Breakpoint.as_register_value();
+                                        trap = TrapReason::Breakpoint;
                                         break 'cycle_block;
                                     },
                                     _ => {
-                                        trap = TrapReason::IllegalInstruction.as_register_value();
+                                        trap = TrapReason::IllegalInstruction;
                                         break 'cycle_block;
                                     }
                                 }
                             }
                         } else {
-                            trap = TrapReason::IllegalInstruction.as_register_value();
+                            trap = TrapReason::IllegalInstruction;
                             break 'cycle_block;
                         }
                     },
                     0b00101111 => {
                         // RV32A, explicitly not supported
-                        trap = TrapReason::IllegalInstruction.as_register_value();
+                        trap = TrapReason::IllegalInstruction;
                         break 'cycle_block;
                     },
                     _ => {
                         // any other instruction
-                        trap = TrapReason::IllegalInstruction.as_register_value();
+                        trap = TrapReason::IllegalInstruction;
                         break 'cycle_block;
                     }
                 }
 
                 // If there was a trap, do NOT allow register writeback.
-                debug_assert_eq!(trap, 0);
+                println!("to end");
+                debug_assert_eq!(trap, TrapReason::NoTrap);
                 // println!("Set x{:02} = 0x{:08x}", rd, ret_val);
                 self.set_register(rd, ret_val);
 
@@ -789,20 +813,21 @@ impl RiscV32State {
             }
         }
 
+        // check PC is aligned
+        if pc & 0x3 != 0 {
+            // unaligned PC
+            trap = TrapReason::InstructionAddressMisaligned;
+        }
+        
         // Handle traps and interrupts.
-        if trap > 0 {
+        if trap.is_a_trap() {
+            let trap = trap.as_register_value();
             if trap & INTERRUPT_MASK != 0 {
                 // interrupt, not a trap. Always machine level in our system
                 self.machine_mode_trap_data.handling.cause = trap;
                 self.machine_mode_trap_data.handling.tval = 0;
                 pc = pc.wrapping_add(4u32); // PC points to where the PC will return!
             } else {
-                // actually a trap
-                println!(
-                    "Trap reason = {:?} at pc = 0x{:08x}",
-                    TrapReason::from_register_value(trap),
-                    pc
-                );
                 self.machine_mode_trap_data.handling.cause = trap;
                 // TODO: here we have a freedom of what to put into tval. We place opcode value now, because PC will be placed into EPC below
                 self.machine_mode_trap_data.handling.tval = instr;
@@ -830,6 +855,7 @@ impl RiscV32State {
         // for debugging
         self.sapt = mmu.read_sapt(current_privilege_mode, &mut trap);
 
+        let trap = trap.as_register_value();
         println!("end of cycle: PC = 0x{:08x}, trap = 0x{:08x}, interrupt = {:?}", self.pc, trap, trap & INTERRUPT_MASK != 0);
     }
 
@@ -857,7 +883,7 @@ impl RiscV32State {
         mmu: &'a mut MMU,
     ) {
         let sp = self.registers[2];
-        let mut trap = 0;
+        let mut trap = TrapReason::NoTrap;
         let current_privilege_mode = self.extra_flags.get_current_mode();
         for i in 0..10 {
             for j in 0..4 {

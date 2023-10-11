@@ -1,10 +1,7 @@
 use std::hint::unreachable_unchecked;
-
-use self::memory::{MemoryAccessTracer, MemorySource};
-use crate::abstractions::memory::AccessType;
-use crate::abstractions::memory::Timestamp;
 use crate::cycle::status_registers::TrapReason;
-
+use self::memory::{MemoryAccessTracer, MemorySource, Timestamp};
+use crate::abstractions::memory::AccessType;
 pub mod memory;
 
 pub struct MemoryImplementation<M: MemorySource, MTR: MemoryAccessTracer> {
@@ -21,30 +18,26 @@ impl<M: MemorySource, MTR: MemoryAccessTracer> MemoryImplementation<M, MTR> {
         phys_address: u64,
         num_bytes: u32,
         access_type: AccessType,
-        trap: &mut u32,
+        trap: &mut TrapReason,
     ) -> u32 {
         let unalignment = phys_address & 3;
         let aligned_address = phys_address & !3;
         let value = match (unalignment, num_bytes) {
             (0, 4) | (0, 2) | (2, 2) | (0, 1) | (1, 1) | (2, 1) | (3, 1) => {
                 let value = self.memory_source.get(aligned_address, access_type, trap);
-                let current_ts = self.timestamp;
-                self.timestamp.update_after_subaccess();
+                let current_ts = self.timestamp.get_and_update();
                 self.tracer.add_query(
-                    aligned_address,
-                    value,
-                    false,
-                    access_type,
                     current_ts,
-                    *trap,
+                    access_type,
+                    aligned_address,
+                    value
                 );
                 let unalignment_bits = unalignment * 8;
                 let value = value >> unalignment_bits;
-
                 value
             }
             _ => {
-                *trap = TrapReason::LoadAddressMisaligned.as_register_value();
+                *trap = TrapReason::LoadAddressMisaligned;
 
                 0u32 // formally
             }
@@ -68,7 +61,7 @@ impl<M: MemorySource, MTR: MemoryAccessTracer> MemoryImplementation<M, MTR> {
         value: u32,
         num_bytes: u32,
         access_type: AccessType,
-        trap: &mut u32,
+        trap: &mut TrapReason,
     ) {
         let unalignment = phys_address & 3;
         let aligned_address = phys_address & !3;
@@ -82,20 +75,17 @@ impl<M: MemorySource, MTR: MemoryAccessTracer> MemoryImplementation<M, MTR> {
             | a @ (3, 1) => {
                 let (unalignment, num_bytes) = a;
 
-                // we need to load old value
+                // we need to load old value - just for easier comparison of simulator/in_circuit implementation
                 let old_value = self.memory_source.get(aligned_address, access_type, trap);
-                if *trap != 0 {
+                let current_ts = self.timestamp.get_and_update();
+                if trap.is_a_trap() {
                     return;
                 }
-                let current_ts = self.timestamp;
-                self.timestamp.update_after_subaccess();
                 self.tracer.add_query(
-                    aligned_address,
-                    old_value,
-                    false,
-                    access_type,
                     current_ts,
-                    *trap,
+                    AccessType::Load,
+                    aligned_address,
+                    old_value
                 );
 
                 let value_mask = match num_bytes {
@@ -119,39 +109,29 @@ impl<M: MemorySource, MTR: MemoryAccessTracer> MemoryImplementation<M, MTR> {
 
                 let new_value =
                     ((value & value_mask) << (unalignment * 8)) | (old_value & mask_old);
-
-                // println!("Writing {} bytes of value 0x{:08x} with unalignment of {} over 0x{:08x} to get 0x{:08x}",
-                //     num_bytes,
-                //     value,
-                //     unalignment,
-                //     old_value,
-                //     new_value,
-                // );
-
-                let current_ts = self.timestamp;
-                self.timestamp.update_after_subaccess();
+                
                 self.memory_source
                     .set(aligned_address, new_value, access_type, trap);
-                if *trap != 0 {
+                if trap.is_a_trap() {
                     return;
                 }
+                
+                let current_ts = self.timestamp.get_and_update();
                 self.tracer.add_query(
-                    aligned_address,
-                    new_value,
-                    true,
-                    access_type,
                     current_ts,
-                    *trap,
+                    AccessType::Store,
+                    aligned_address,
+                    new_value
                 );
             }
 
             _ => {
-                *trap = TrapReason::StoreOrAMOAddressMisaligned.as_register_value();
+                *trap = TrapReason::StoreOrAMOAddressMisaligned;
             }
         };
     }
 
-    pub fn notify_new_cycle(&mut self) {
-        self.timestamp = self.timestamp.new_cycle_timestamp();
+    pub fn set_queries_counter(&mut self, counter: u32) {
+        self.timestamp = self.timestamp.new_cycle_timestamp(counter);
     }
 }

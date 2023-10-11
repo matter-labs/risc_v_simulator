@@ -36,9 +36,16 @@ pub enum TrapReason {
     InstructionPageFault = 12,
     LoadPageFault = 13,
     StoreOrAMOPageFault = 15,
+    NoTrap = 0xff,
 }
 
 impl TrapReason {
+    #[must_use]
+    #[inline(always)]
+    pub const fn is_a_trap(&self) -> bool {
+        self.as_register_value() != Self::NoTrap.as_register_value()
+    }
+
     #[must_use]
     #[inline(always)]
     pub const fn as_register_value(self) -> u32 {

@@ -72,6 +72,12 @@ impl MStatusRegister {
         set_bits_to_value(dst, 7, value);
     }
 
+    #[inline(always)]
+    pub const fn set_mpp_to_machine(dst: &mut u32) {
+        Self::clear_mpp(dst);
+        set_bits_to_value(dst, 11, 3);
+    }
+
     #[must_use]
     #[inline(always)]
     pub const fn mpie_aligned_bit(src: u32) -> u32 {
