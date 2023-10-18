@@ -303,7 +303,7 @@ impl RiscV32State {
                 &mut trap,
             );
 
-            println!("PC = 0x{:08x}, instr = 0x{:08x}", pc, instr);
+            //println!("PC = 0x{:08x}, instr = 0x{:08x}", pc, instr);
 
             if trap.is_a_trap() {
                 // error during address translation
@@ -374,7 +374,7 @@ impl RiscV32State {
                 0b1100011 => {
                     // BRANCH
                     let mut imm = BTypeOpcode::imm(instr);
-                    sign_extend(&mut imm, 12);
+                    sign_extend(&mut imm, 13);
 
                     let rs1 = BTypeOpcode::rs1(instr);
                     let rs1 = self.get_register(rs1);
@@ -383,7 +383,7 @@ impl RiscV32State {
                     rd = 0;
                     let dst = pc.wrapping_add(imm).wrapping_sub(4u32);
                     let funct3 = BTypeOpcode::funct3(instr);
-                
+
                     let should_jump = match funct3 {
                         0 => rs1 == rs2,
                         1 => rs1 != rs2,
@@ -872,7 +872,7 @@ impl RiscV32State {
         self.sapt = mmu.read_sapt(current_privilege_mode, &mut trap);
 
         let trap = trap.as_register_value();
-        println!("end of cycle: PC = 0x{:08x}, trap = 0x{:08x}, interrupt = {:?}", self.pc, trap, trap & INTERRUPT_MASK != 0);
+        //println!("end of cycle: PC = 0x{:08x}, trap = 0x{:08x}, interrupt = {:?}", self.pc, trap, trap & INTERRUPT_MASK != 0);
     }
 
     pub fn pretty_dump(&self) {
