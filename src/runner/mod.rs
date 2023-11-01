@@ -1,7 +1,8 @@
 use std::collections::VecDeque;
 
-use crate::abstractions::MemoryImplementation;
 use crate::abstractions::memory::MemoryAccessTracerImpl;
+use crate::abstractions::non_determinism::{QuasiUARTSource, ZeroedSource};
+use crate::abstractions::MemoryImplementation;
 use crate::cycle::state::StateTracer;
 use crate::mmio::quasi_uart::QuasiUART;
 use crate::mmio::MMIOSource;
@@ -30,13 +31,21 @@ pub fn run_simple_simulator(os_image: Vec<u8>, cycles: usize) {
     use crate::mmu::NoMMU;
     let mut mmu = NoMMU { sapt: state.sapt };
 
-    let quasi_uart = QuasiUART {
+    // let quasi_uart = QuasiUART {
+    //     oracle: VecDeque::new(),
+    //     buffer: Vec::new(),
+    // };
+    // let quasi_uart = Box::new(quasi_uart) as Box<dyn MMIOSource>;
+    // let mut sources = [quasi_uart];
+    // let mut mmio = MMIOImplementation::<1>::construct(&mut sources);
+    // let mut non_determinism_source = ZeroedSource;
+
+    let mut sources = [];
+    let mut mmio = MMIOImplementation::<0>::construct(&mut sources);
+    let mut non_determinism_source = QuasiUARTSource {
         oracle: VecDeque::new(),
         buffer: Vec::new(),
     };
-    let quasi_uart = Box::new(quasi_uart) as Box<dyn MMIOSource>;
-    let mut sources = [quasi_uart];
-    let mut mmio = MMIOImplementation::<1>::construct(&mut sources);
 
     let mut memory = MemoryImplementation {
         memory_source: memory,
@@ -46,12 +55,19 @@ pub fn run_simple_simulator(os_image: Vec<u8>, cycles: usize) {
 
     for _ in 0..cycles {
         // state.pretty_dump();
-        state.cycle(&mut memory, &mut mmu, &mut mmio);
+        state.cycle(
+            &mut memory,
+            &mut mmu,
+            &mut mmio,
+            &mut non_determinism_source,
+        );
     }
-
 }
 
-pub fn run_simulator_with_traces(os_image: Vec<u8>, cycles: usize) -> (StateTracer, MemoryAccessTracerImpl) {
+pub fn run_simulator_with_traces(
+    os_image: Vec<u8>,
+    cycles: usize,
+) -> (StateTracer, MemoryAccessTracerImpl) {
     let mut state = RiscV32State::initial(CUSTOM_ENTRY_POINT);
     let mut state_tracer = StateTracer::new();
     let memory_tracer = MemoryAccessTracerImpl::new();
@@ -72,13 +88,21 @@ pub fn run_simulator_with_traces(os_image: Vec<u8>, cycles: usize) -> (StateTrac
     use crate::mmu::NoMMU;
     let mut mmu = NoMMU { sapt: state.sapt };
 
-    let quasi_uart = QuasiUART {
+    // let quasi_uart = QuasiUART {
+    //     oracle: VecDeque::new(),
+    //     buffer: Vec::new(),
+    // };
+    // let quasi_uart = Box::new(quasi_uart) as Box<dyn MMIOSource>;
+    // let mut sources = [quasi_uart];
+    // let mut mmio = MMIOImplementation::<1>::construct(&mut sources);
+    // let mut non_determinism_source = ZeroedSource;
+
+    let mut sources = [];
+    let mut mmio = MMIOImplementation::<0>::construct(&mut sources);
+    let mut non_determinism_source = QuasiUARTSource {
         oracle: VecDeque::new(),
         buffer: Vec::new(),
     };
-    let quasi_uart = Box::new(quasi_uart) as Box<dyn MMIOSource>;
-    let mut sources = [quasi_uart];
-    let mut mmio = MMIOImplementation::<1>::construct(&mut sources);
 
     let mut memory = MemoryImplementation {
         memory_source: memory,
@@ -88,9 +112,14 @@ pub fn run_simulator_with_traces(os_image: Vec<u8>, cycles: usize) -> (StateTrac
 
     for i in 0..cycles {
         // state.pretty_dump();
-        state.cycle(&mut memory, &mut mmu, &mut mmio);
+        state.cycle(
+            &mut memory,
+            &mut mmu,
+            &mut mmio,
+            &mut non_determinism_source,
+        );
         println!("mtvec: {:?}", state.machine_mode_trap_data.setup.tvec);
-        state_tracer.insert(i+1, state);
+        state_tracer.insert(i + 1, state);
     }
 
     let memory_tracer = memory.tracer;

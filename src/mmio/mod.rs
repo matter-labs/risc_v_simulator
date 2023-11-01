@@ -52,7 +52,12 @@ impl<'a, const N: usize> MMIOImplementation<'a, N> {
         Err(())
     }
 
-    pub fn write(&mut self, phys_address: u64, value: u32, trap: &mut TrapReason) -> Result<(), ()> {
+    pub fn write(
+        &mut self,
+        phys_address: u64,
+        value: u32,
+        trap: &mut TrapReason,
+    ) -> Result<(), ()> {
         for (range, source) in self.sources.iter_mut() {
             if range.contains(&phys_address) {
                 source.write(phys_address, value, trap);

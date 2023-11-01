@@ -238,9 +238,7 @@ impl<M: MemorySource, MTR: MemoryAccessTracer> MMUImplementation<M, MTR> for Sim
                 pte = PageTableEntry::from_value(pte_value);
                 if pte.is_valid() == false {
                     *trap = match access_type {
-                        AccessType::Instruction => {
-                            TrapReason::InstructionPageFault
-                        }
+                        AccessType::Instruction => TrapReason::InstructionPageFault,
                         AccessType::Load => TrapReason::LoadPageFault,
                         AccessType::Store => TrapReason::StoreOrAMOPageFault,
                     };

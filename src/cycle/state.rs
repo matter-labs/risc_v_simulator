@@ -3,6 +3,7 @@ use std::hint::unreachable_unchecked;
 
 use super::status_registers::*;
 use crate::abstractions::memory::{AccessType, MemoryAccessTracer, MemorySource};
+use crate::abstractions::non_determinism::NonDeterminismCSRSource;
 use crate::abstractions::MemoryImplementation;
 use crate::mmio::MMIOImplementation;
 use crate::mmu::MMUImplementation;
@@ -15,6 +16,7 @@ use rand::Rng;
 
 pub const NUM_REGISTERS: usize = 32;
 pub const MAX_MEMORY_OPS_PER_CYCLE: u32 = 3;
+pub const NON_DETERMINISM_CSR: u32 = 0x7c0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
@@ -117,7 +119,7 @@ impl ExtraFlags {
 
 #[derive(Clone, Debug)]
 pub struct StateTracer {
-    pub tracer: HashMap<usize, RiscV32State>
+    pub tracer: HashMap<usize, RiscV32State>,
 }
 
 impl StateTracer {
@@ -148,7 +150,7 @@ pub struct RiscV32State {
 
     pub machine_mode_trap_data: ModeStatusAndTrapRegisters,
 
-    pub sapt: u32 // for debugging
+    pub sapt: u32, // for debugging
 }
 
 impl RiscV32State {
@@ -196,7 +198,11 @@ impl RiscV32State {
         let mut rng = rand::thread_rng();
 
         let mut extra_flags = ExtraFlags(0u32);
-        extra_flags.set_mode(if is_user_mode {Mode::User} else {Mode::Machine});
+        extra_flags.set_mode(if is_user_mode {
+            Mode::User
+        } else {
+            Mode::Machine
+        });
         if is_halted {
             extra_flags.set_wait_for_interrupt_bit()
         }
@@ -224,17 +230,17 @@ impl RiscV32State {
         };
 
         let state = RiscV32State {
-            registers: std::array::from_fn(|i| if i > 0 {rng.gen()} else {0} ),
+            registers: std::array::from_fn(|i| if i > 0 { rng.gen() } else { 0 }),
             pc: initial_pc,
             extra_flags,
-        
+
             cycle_counter,
             timer,
             timer_match,
-        
+
             machine_mode_trap_data,
-        
-            sapt: rng.gen()
+
+            sapt: rng.gen(),
         };
 
         state
@@ -260,13 +266,16 @@ impl RiscV32State {
         M: MemorySource,
         MTR: MemoryAccessTracer,
         MMU: MMUImplementation<M, MTR, AuxilarySource = MemoryImplementation<M, MTR>>,
+        ND: NonDeterminismCSRSource,
     >(
         &'a mut self,
         memory: &'a mut MemoryImplementation<M, MTR>,
         mmu: &'a mut MMU,
         mmio: &'a mut MMIOImplementation<'b, N>,
+        non_determinism_source: &mut ND,
     ) {
-        let mem_queries_per_cycle = MMU::NUM_RAW_MEM_ACCESSES_PER_INVOCATION * MAX_MEMORY_OPS_PER_CYCLE;
+        let mem_queries_per_cycle =
+            MMU::NUM_RAW_MEM_ACCESSES_PER_INVOCATION * MAX_MEMORY_OPS_PER_CYCLE;
         memory.set_queries_counter(mem_queries_per_cycle * self.cycle_counter as u32);
         self.cycle_counter += 1;
 
@@ -308,7 +317,8 @@ impl RiscV32State {
             if trap.is_a_trap() {
                 // error during address translation
                 debug_assert_eq!(
-                    trap.as_register_value(), TrapReason::InstructionAccessFault.as_register_value()
+                    trap.as_register_value(),
+                    TrapReason::InstructionAccessFault.as_register_value()
                 );
                 break 'cycle_block;
             }
@@ -716,6 +726,9 @@ impl RiscV32State {
                             0x344 => ret_val = self.machine_mode_trap_data.state.ip, // mip
                             //0xc00 => ret_val = self.cycle_counter as u32, // cycle
                             //0xf11 => ret_val = 0, // vendor ID, will come up later on,
+                            NON_DETERMINISM_CSR => {
+                                ret_val = non_determinism_source.read();
+                            }
                             _ => {
                                 trap = TrapReason::IllegalInstruction;
                                 break 'cycle_block;
@@ -749,6 +762,9 @@ impl RiscV32State {
                             0x342 => self.machine_mode_trap_data.handling.cause = write_val, // mcause
                             //0x343 => self.machine_mode_trap_data.handling.tval = write_val, // mtval
                             //0x344 => self.machine_mode_trap_data.state.ip = write_val, // mip
+                            NON_DETERMINISM_CSR => {
+                                non_determinism_source.write(write_val);
+                            }
                             _ => {
                                 trap = TrapReason::IllegalInstruction;
                                 break 'cycle_block;

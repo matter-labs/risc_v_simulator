@@ -1,6 +1,5 @@
-use std::collections::HashMap;
 use crate::cycle::status_registers::TrapReason;
-
+use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
@@ -10,9 +9,14 @@ pub enum AccessType {
     Store = 2,
 }
 
-
 pub trait MemorySource {
-    fn set(&mut self, phys_address: u64, value: u32, access_type: AccessType, trap: &mut TrapReason);
+    fn set(
+        &mut self,
+        phys_address: u64,
+        value: u32,
+        access_type: AccessType,
+        trap: &mut TrapReason,
+    );
     fn get(&self, phys_address: u64, access_type: AccessType, trap: &mut TrapReason) -> u32;
 }
 
@@ -32,7 +36,7 @@ impl VectorMemoryImpl {
     pub fn populate(&mut self, address: u32, value: u32) {
         assert!(address % 4 == 0);
         self.inner[(address / 4) as usize] = value;
-    } 
+    }
 }
 
 impl MemorySource for VectorMemoryImpl {
@@ -43,9 +47,7 @@ impl MemorySource for VectorMemoryImpl {
             self.inner[(phys_address / 4) as usize]
         } else {
             match access_type {
-                AccessType::Instruction => {
-                    *trap = TrapReason::InstructionAccessFault
-                }
+                AccessType::Instruction => *trap = TrapReason::InstructionAccessFault,
                 AccessType::Load => *trap = TrapReason::LoadAccessFault,
                 AccessType::Store => *trap = TrapReason::StoreOrAMOAccessFault,
             }
@@ -55,14 +57,18 @@ impl MemorySource for VectorMemoryImpl {
     }
 
     #[inline(always)]
-    fn set(&mut self, phys_address: u64, value: u32, access_type: AccessType, trap: &mut TrapReason) {
+    fn set(
+        &mut self,
+        phys_address: u64,
+        value: u32,
+        access_type: AccessType,
+        trap: &mut TrapReason,
+    ) {
         if ((phys_address / 4) as usize) < self.inner.len() {
             self.inner[(phys_address / 4) as usize] = value;
         } else {
             match access_type {
-                AccessType::Instruction => {
-                    *trap = TrapReason::InstructionAccessFault
-                }
+                AccessType::Instruction => *trap = TrapReason::InstructionAccessFault,
                 AccessType::Load => *trap = TrapReason::LoadAccessFault,
                 AccessType::Store => *trap = TrapReason::StoreOrAMOAccessFault,
             }
@@ -96,7 +102,7 @@ pub trait MemoryAccessTracer {
         ts: Self::Timestamp,
         access_type: AccessType,
         phys_address: u64,
-        value: u32
+        value: u32,
     );
 }
 
@@ -109,7 +115,7 @@ impl MemoryAccessTracer for () {
         _ts: Self::Timestamp,
         _access_type: AccessType,
         _phys_address: u64,
-        _value: u32
+        _value: u32,
     ) {
     }
 }
@@ -139,8 +145,9 @@ impl MemoryAccessTracer for MemoryAccessTracerImpl {
         ts: Self::Timestamp,
         access_type: AccessType,
         phys_address: u64,
-        value: u32    
+        value: u32,
     ) {
-       self.memory_trace.insert(ts as usize, (access_type, phys_address, value));
+        self.memory_trace
+            .insert(ts as usize, (access_type, phys_address, value));
     }
 }
