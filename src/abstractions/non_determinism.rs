@@ -21,7 +21,6 @@ pub struct QuasiUARTSource {
     pub buffer: Vec<u8>,
 }
 
-pub const QUASI_UART_ADDRESS: u32 = 0x0000_0004;
 
 impl NonDeterminismCSRSource for QuasiUARTSource {
     fn read(&mut self) -> u32 {

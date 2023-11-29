@@ -1,22 +1,54 @@
 use crate::cycle::status_registers::TrapReason;
 use std::collections::HashMap;
 
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum AccessType {
     Instruction = 0,
-    Load = 1,
-    Store = 2,
+    MemLoad = 1,
+    MemStore = 2,
+    RegReadFirst = 3,
+    RegReadSecond = 4,
+    RegWrite = 5,
+    None = 6,
+}
+pub const NUM_DIFFERENT_ACCESS_TYPES: usize = 6;
+
+impl AccessType {
+    pub fn is_write_access(&self) -> bool {
+        match self {
+            AccessType::MemStore | AccessType::RegWrite | AccessType::None => true,
+            _ => false
+        }
+    }
+
+    pub fn is_read_access(&self) -> bool {
+        !self.is_write_access()
+    }
+
+    pub fn is_reg_access(&self) -> bool {
+        match self {
+            AccessType::RegReadFirst | AccessType::RegReadSecond | AccessType::RegWrite => true,
+            _ => false
+        }
+    }
+
+    pub fn from_idx(idx: u32) -> Self {
+        match idx {
+            0 => AccessType::Instruction,
+            1 => AccessType::MemLoad,
+            2 => AccessType::MemStore,
+            3 => AccessType::RegReadFirst,
+            4 => AccessType::RegReadSecond,
+            5 => AccessType::RegWrite,
+            _ => AccessType::None
+        }
+    }
 }
 
 pub trait MemorySource {
-    fn set(
-        &mut self,
-        phys_address: u64,
-        value: u32,
-        access_type: AccessType,
-        trap: &mut TrapReason,
-    );
+    fn set(&mut self, phys_address: u64, value: u32,access_type: AccessType, trap: &mut TrapReason);
     fn get(&self, phys_address: u64, access_type: AccessType, trap: &mut TrapReason) -> u32;
 }
 
@@ -48,8 +80,9 @@ impl MemorySource for VectorMemoryImpl {
         } else {
             match access_type {
                 AccessType::Instruction => *trap = TrapReason::InstructionAccessFault,
-                AccessType::Load => *trap = TrapReason::LoadAccessFault,
-                AccessType::Store => *trap = TrapReason::StoreOrAMOAccessFault,
+                AccessType::MemLoad => *trap = TrapReason::LoadAccessFault,
+                AccessType::MemStore => *trap = TrapReason::StoreOrAMOAccessFault,
+                _ => unreachable!(),
             }
 
             0
@@ -69,59 +102,67 @@ impl MemorySource for VectorMemoryImpl {
         } else {
             match access_type {
                 AccessType::Instruction => *trap = TrapReason::InstructionAccessFault,
-                AccessType::Load => *trap = TrapReason::LoadAccessFault,
-                AccessType::Store => *trap = TrapReason::StoreOrAMOAccessFault,
+                AccessType::MemLoad => *trap = TrapReason::LoadAccessFault,
+                AccessType::MemStore => *trap = TrapReason::StoreOrAMOAccessFault,
+                _ => unreachable!()
             }
         }
     }
 }
 
-pub trait Timestamp: 'static + Clone + Copy + std::fmt::Debug {
-    fn new_cycle_timestamp(self, queries_per_cycle: u32) -> Self;
-    fn get_and_update(&mut self) -> Self;
-}
-
-// we deliberately assume that no more 16 accesses can happen per cycle
-impl Timestamp for u32 {
-    fn get_and_update(&mut self) -> u32 {
-        let res = *self;
-        *self = self.wrapping_add(1u32);
-        res
-    }
-
-    fn new_cycle_timestamp(self, queries_per_cycle: u32) -> Self {
-        queries_per_cycle
-    }
-}
 
 pub trait MemoryAccessTracer {
-    type Timestamp: Timestamp;
-
-    fn add_query(
-        &mut self,
-        ts: Self::Timestamp,
-        access_type: AccessType,
-        phys_address: u64,
-        value: u32,
-    );
+    fn add_query(&mut self, proc_cycle: u32, access_type: AccessType, phys_address: u64, value: u32);
+    fn sort_queries(&self, should_include_reg_queries: bool, height: u32) -> Vec<IndexedMemQuery>;
 }
 
 impl MemoryAccessTracer for () {
-    type Timestamp = u32;
-
     #[inline(always)]
-    fn add_query(
-        &mut self,
-        _ts: Self::Timestamp,
-        _access_type: AccessType,
-        _phys_address: u64,
-        _value: u32,
-    ) {
+    fn add_query(&mut self, _proc_cycle: u32, _access_type: AccessType, _phys_address: u64, _value: u32) {}
+    fn sort_queries(&self, _should_include_reg_queries: bool, _height: u32) -> Vec<IndexedMemQuery> {
+        vec![]    
+    }
+}
+
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MemQuery {
+    pub access_type: AccessType,
+    pub address: u64,
+    pub value: u32
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IndexedMemQuery {
+    pub execute: bool,
+    pub is_read_flag: bool,
+    pub timestamp: u32,
+    pub address: u64,
+    pub value: u32
+}
+
+impl IndexedMemQuery {
+    pub fn default_for_timestamp(timestamp: u32) -> Self {
+        IndexedMemQuery {
+            execute: false,
+            is_read_flag: false, // by our conventon default operation is write (see air_compiler for details)
+            timestamp,
+            address: 0,
+            value: 0
+        }
+    }
+}
+
+pub struct MemoryAccesesPerStep(pub [Option<MemQuery>; NUM_DIFFERENT_ACCESS_TYPES]);
+
+impl MemoryAccesesPerStep {
+    pub fn new() -> Self {
+        MemoryAccesesPerStep([None; NUM_DIFFERENT_ACCESS_TYPES])
     }
 }
 
 pub struct MemoryAccessTracerImpl {
-    pub memory_trace: HashMap<usize, (AccessType, u64, u32)>,
+    pub memory_trace: HashMap<u32, MemoryAccesesPerStep>,
 }
 
 impl MemoryAccessTracerImpl {
@@ -130,24 +171,50 @@ impl MemoryAccessTracerImpl {
             memory_trace: HashMap::new(),
         }
     }
-
-    pub fn get(&self, ts: usize) -> Option<(AccessType, u64, u32)> {
-        self.memory_trace.get(&ts).copied()
-    }
 }
 
 impl MemoryAccessTracer for MemoryAccessTracerImpl {
-    type Timestamp = u32;
-
     #[inline(always)]
-    fn add_query(
-        &mut self,
-        ts: Self::Timestamp,
-        access_type: AccessType,
-        phys_address: u64,
-        value: u32,
-    ) {
-        self.memory_trace
-            .insert(ts as usize, (access_type, phys_address, value));
+    fn add_query(&mut self, proc_cycle: u32, access_type: AccessType, phys_address: u64, value: u32) {
+        let entry = self.memory_trace.entry(proc_cycle).or_insert(MemoryAccesesPerStep::new());
+        let query = MemQuery { access_type, address: phys_address, value };
+        entry.0[access_type as usize] = Some(query);
+    }
+
+    fn sort_queries(&self, should_include_reg_queries: bool, height: u32) -> Vec<IndexedMemQuery> {
+        let mut res: Vec<IndexedMemQuery> = Vec::with_capacity(height as usize * self.memory_trace.len());
+        
+        for (&proc_cycle, query_arr) in self.memory_trace.iter() {
+            for sub_idx in 0..height {
+                let timestamp = proc_cycle * height + sub_idx;
+                let query_option = query_arr.0.get(sub_idx as usize);
+                let indexed_query = query_option.map(|x| {
+                    let access_type = AccessType::from_idx(sub_idx);
+                    if access_type.is_reg_access() && !should_include_reg_queries {
+                        IndexedMemQuery::default_for_timestamp(timestamp)
+                    } else {
+                        IndexedMemQuery {
+                            execute: x.is_some(),
+                            is_read_flag: access_type.is_read_access(),
+                            timestamp,
+                            address: x.map(|x| x.address).unwrap_or(0),
+                            value: x.map(|x| x.value).unwrap_or(0)
+                        }
+                    }
+                }).unwrap_or(IndexedMemQuery::default_for_timestamp(timestamp));
+                res.push(indexed_query);
+            }
+        }
+
+        res.sort_by_key(|query| {
+            // | execute | address | proc_cycle
+            let mut key: u128 = query.execute as u128;
+            key <<= 64;
+            key += query.address as u128;
+            key <<= 32;
+            key += query.timestamp as u128;
+            key
+        });
+        res
     }
 }

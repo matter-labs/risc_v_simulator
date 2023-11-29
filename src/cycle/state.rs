@@ -4,9 +4,8 @@ use std::hint::unreachable_unchecked;
 use super::status_registers::*;
 use crate::abstractions::memory::{AccessType, MemoryAccessTracer, MemorySource};
 use crate::abstractions::non_determinism::NonDeterminismCSRSource;
-use crate::abstractions::MemoryImplementation;
-use crate::mmio::MMIOImplementation;
 use crate::mmu::MMUImplementation;
+use crate::abstractions::{mem_read, mem_write};
 
 use crate::utils::*;
 
@@ -248,37 +247,45 @@ impl RiscV32State {
 
     #[must_use]
     #[inline(always)]
-    pub const fn get_register(&self, reg_idx: u32) -> u32 {
-        self.registers[reg_idx as usize]
+    pub fn get_first_register<MTR: MemoryAccessTracer>(
+        &self, reg_idx: u32, proc_cycle: u32, memory_tracer: &mut MTR
+    ) -> u32 {
+        let res = self.registers[reg_idx as usize];
+        memory_tracer.add_query(proc_cycle, AccessType::RegReadFirst, reg_idx as u64, res);
+        res
+    }
+
+    #[must_use]
+    #[inline(always)]
+    pub fn get_second_register<MTR: MemoryAccessTracer>(
+        &self, reg_idx: u32, proc_cycle: u32, memory_tracer: &mut MTR
+    ) -> u32 {
+        let res = self.registers[reg_idx as usize];
+        memory_tracer.add_query(proc_cycle, AccessType::RegReadSecond, reg_idx as u64, res);
+        res
     }
 
     #[inline(always)]
-    pub const fn set_register(&mut self, reg_idx: u32, value: u32) {
+    pub fn set_register<MTR: MemoryAccessTracer>(
+        &mut self, reg_idx: u32, value: u32, proc_cycle: u32, memory_tracer: &mut MTR
+    ) {
         if reg_idx != 0 {
             self.registers[reg_idx as usize] = value;
+            memory_tracer.add_query(proc_cycle, AccessType::RegWrite, reg_idx as u64, value);
         }
     }
 
     pub fn cycle<
-        'a,
-        'b: 'a,
-        const N: usize,
-        M: MemorySource,
-        MTR: MemoryAccessTracer,
-        MMU: MMUImplementation<M, MTR, AuxilarySource = MemoryImplementation<M, MTR>>,
-        ND: NonDeterminismCSRSource,
+        'a, M: MemorySource, MTR: MemoryAccessTracer, ND: NonDeterminismCSRSource, 
+        MMU: MMUImplementation<M, MTR>
     >(
         &'a mut self,
-        memory: &'a mut MemoryImplementation<M, MTR>,
+        memory_source: &'a mut M, 
+        memory_tracer: &'a mut MTR,
         mmu: &'a mut MMU,
-        mmio: &'a mut MMIOImplementation<'b, N>,
         non_determinism_source: &mut ND,
+        proc_cycle: u32
     ) {
-        let mem_queries_per_cycle =
-            MMU::NUM_RAW_MEM_ACCESSES_PER_INVOCATION * MAX_MEMORY_OPS_PER_CYCLE;
-        memory.set_queries_counter(mem_queries_per_cycle * self.cycle_counter as u32);
-        self.cycle_counter += 1;
-
         if self.extra_flags.get_wait_for_interrupt() != 0 {
             return;
         }
@@ -296,7 +303,9 @@ impl RiscV32State {
                 pc,
                 current_privilege_mode,
                 AccessType::Instruction,
-                memory,
+                memory_source,
+                memory_tracer,
+                proc_cycle,
                 &mut trap,
             );
             if trap.is_a_trap() {
@@ -305,14 +314,15 @@ impl RiscV32State {
                 break 'cycle_block;
             }
 
-            instr = memory.read(
+            instr = mem_read(
+                memory_source,
+                memory_tracer,
                 instruction_phys_address,
                 4,
                 AccessType::Instruction,
+                proc_cycle,
                 &mut trap,
             );
-
-            //println!("PC = 0x{:08x}, instr = 0x{:08x}", pc, instr);
 
             if trap.is_a_trap() {
                 // error during address translation
@@ -322,8 +332,8 @@ impl RiscV32State {
                 );
                 break 'cycle_block;
             }
+            
             // decode the instruction and perform cycle
-
             // destination register
             let mut rd = get_rd(instr);
 
@@ -369,7 +379,7 @@ impl RiscV32State {
 
                     ret_val = pc.wrapping_add(4u32);
                     let rs1 = ITypeOpcode::rs1(instr);
-                    let reg_value = self.get_register(rs1);
+                    let reg_value = self.get_first_register(rs1, proc_cycle, memory_tracer);
                     //  The target address is obtained by adding the 12-bit signed I-immediate 
                     // to the register rs1, then setting the least-significant bit of the result to zero
                     let jmp_addr = (reg_value.wrapping_add(imm) & !0x1).wrapping_sub(4u32);
@@ -387,9 +397,9 @@ impl RiscV32State {
                     sign_extend(&mut imm, 13);
 
                     let rs1 = BTypeOpcode::rs1(instr);
-                    let rs1 = self.get_register(rs1);
+                    let rs1 = self.get_first_register(rs1, proc_cycle, memory_tracer);
                     let rs2 = BTypeOpcode::rs2(instr);
-                    let rs2 = self.get_register(rs2);
+                    let rs2 = self.get_second_register(rs2, proc_cycle, memory_tracer);
                     rd = 0;
                     let dst = pc.wrapping_add(imm).wrapping_sub(4u32);
                     let funct3 = BTypeOpcode::funct3(instr);
@@ -432,62 +442,57 @@ impl RiscV32State {
                     sign_extend(&mut imm, 12);
 
                     let rs1 = ITypeOpcode::rs1(instr);
-                    let rs1 = self.get_register(rs1);
+                    let rs1 = self.get_first_register(rs1, proc_cycle, memory_tracer);
                     let virtual_address = rs1.wrapping_add(imm);
 
                     // println!("Load into x{:02} from 0x{:08x} at PC = 0x{:08x}", rd, virtual_address, pc);
 
                     // we formally access it once, but most likely full memory access
                     // will be abstracted away into external interface hiding memory translation too
-                    let operand_phys_address = mmu.map_virtual_to_physical(virtual_address, current_privilege_mode, AccessType::Load, memory, &mut trap);
+                    let operand_phys_address = mmu.map_virtual_to_physical(
+                        virtual_address, current_privilege_mode, AccessType::MemLoad, memory_source, 
+                        memory_tracer, proc_cycle, &mut trap
+                    );
                     if trap.is_a_trap() {
                         // error during address translation
                         debug_assert_eq!(trap, TrapReason::LoadPageFault);
                         break 'cycle_block;
                     }
 
-                    // try MMIO first
-                    if let Ok(val) = mmio.read(operand_phys_address, &mut trap) {
-                        if trap.is_a_trap() {
-                            break 'cycle_block;
-                        }
-                        ret_val = val;
-                    } else {
-                        // access memory
-                        let funct3 = ITypeOpcode::funct3(instr);
-                        match funct3 {
-                            a @ 0 | a @ 1 | a @ 2 | a @ 4 | a @ 5 => {
-                                let num_bytes = match a {
-                                    0 | 4 => 1,
-                                    1 | 5 => 2,
-                                    2 => 4,
-                                    _ => unsafe {unreachable_unchecked()}
-                                };
-                                // Memory implementation should handle read in full. For now we only use one
-                                // that doesn't step over 4 byte boundary ever, meaning even though formal address is not 4 byte aligned,
-                                // loads of u8/u16/u32 are still "aligned"
-                                let operand = memory.read(
-                                    operand_phys_address, num_bytes, AccessType::Load, &mut trap
-                                );
-                                if trap.is_a_trap() {
-                                    debug_assert_eq!(trap, TrapReason::LoadAddressMisaligned);
-                                    break 'cycle_block;
-                                }
-                                // now depending on the type of load we extend it
-                                ret_val = match a {
-                                    0 => sign_extend_8(operand),
-                                    1 => sign_extend_16(operand),
-                                    2 => operand,
-                                    4 => zero_extend_8(operand),
-                                    5 => zero_extend_16(operand),
-                                    _ => unsafe {unreachable_unchecked()}
-                                };
-                            },
-                            _ => {
-                                trap = TrapReason::IllegalInstruction;
+                    let funct3 = ITypeOpcode::funct3(instr);
+                    match funct3 {
+                        a @ 0 | a @ 1 | a @ 2 | a @ 4 | a @ 5 => {
+                            let num_bytes = match a {
+                                0 | 4 => 1,
+                                1 | 5 => 2,
+                                2 => 4,
+                                _ => unsafe {unreachable_unchecked()}
+                            };
+                            // Memory implementation should handle read in full. For now we only use one
+                            // that doesn't step over 4 byte boundary ever, meaning even though formal address is not 4 byte aligned,
+                            // loads of u8/u16/u32 are still "aligned"
+                            let operand = mem_read(
+                                memory_source, memory_tracer, operand_phys_address, 
+                                num_bytes, AccessType::MemLoad, proc_cycle, &mut trap
+                            );
+                            if trap.is_a_trap() {
+                                debug_assert_eq!(trap, TrapReason::LoadAddressMisaligned);
                                 break 'cycle_block;
-                            },
-                        }
+                            }
+                            // now depending on the type of load we extend it
+                            ret_val = match a {
+                                0 => sign_extend_8(operand),
+                                1 => sign_extend_16(operand),
+                                2 => operand,
+                                4 => zero_extend_8(operand),
+                                5 => zero_extend_16(operand),
+                                _ => unsafe {unreachable_unchecked()}
+                            };
+                        },
+                        _ => {
+                            trap = TrapReason::IllegalInstruction;
+                            break 'cycle_block;
+                        },
                     }
                 },
                 0b0100011 => {
@@ -496,9 +501,9 @@ impl RiscV32State {
                     sign_extend(&mut imm, 12);
 
                     let rs1 = STypeOpcode::rs1(instr);
-                    let rs1 = self.get_register(rs1);
+                    let rs1 = self.get_first_register(rs1, proc_cycle, memory_tracer);
                     let rs2 = STypeOpcode::rs2(instr);
-                    let rs2 = self.get_register(rs2);
+                    let rs2 = self.get_second_register(rs2, proc_cycle, memory_tracer);
                     let virtual_address = imm.wrapping_add(rs1);
                     // it's S-type, that has no RD, so set it to x0
                     rd = 0;
@@ -509,35 +514,35 @@ impl RiscV32State {
 
                     // we formally access it once, but most likely full memory access
                     // will be abstracted away into external interface hiding memory translation too
-                    let operand_phys_address = mmu.map_virtual_to_physical(virtual_address, current_privilege_mode, AccessType::Store, memory, &mut trap);
+                    let operand_phys_address = mmu.map_virtual_to_physical(
+                        virtual_address, current_privilege_mode, AccessType::MemStore, memory_source, memory_tracer, 
+                        proc_cycle, &mut trap
+                    );
                     if trap.is_a_trap() {
                         debug_assert_eq!(trap, TrapReason::StoreOrAMOPageFault);
                         break 'cycle_block;
                     }
 
-                    if let Ok(_) = mmio.write(operand_phys_address, rs2, &mut trap) {
-                        if trap.is_a_trap() {
-                            break 'cycle_block;
-                        }
-                    } else {
-                        // access memory
-                        let funct3 = STypeOpcode::funct3(instr);
-                        match funct3 {
-                            a @ 0 | a @ 1 | a @ 2 => {
-                                let store_length = 1 << a;
-                                // memory handles the write in full, whether it's aligned or not, or whatever
-                                memory.write(operand_phys_address, rs2, store_length, AccessType::Store, &mut trap);
-                                if trap.is_a_trap() {
-                                    // error during address translation
-                                    debug_assert_eq!(trap, TrapReason::StoreOrAMOAddressMisaligned);
-                                    break 'cycle_block;
-                                }
-                            },
-                            _ => {
-                                trap = TrapReason::IllegalInstruction;
+                    // access memory
+                    let funct3 = STypeOpcode::funct3(instr);
+                    match funct3 {
+                        a @ 0 | a @ 1 | a @ 2 => {
+                            let store_length = 1 << a;
+                            // memory handles the write in full, whether it's aligned or not, or whatever
+                            mem_write(
+                                memory_source, memory_tracer, operand_phys_address, rs2, store_length, 
+                                proc_cycle, &mut trap
+                            );
+                            if trap.is_a_trap() {
+                                // error during address translation
+                                debug_assert_eq!(trap, TrapReason::StoreOrAMOAddressMisaligned);
                                 break 'cycle_block;
-                            },
-                        }
+                            }
+                        },
+                        _ => {
+                            trap = TrapReason::IllegalInstruction;
+                            break 'cycle_block;
+                        },
                     }
                 },
                 0b0010011 | // Op-immediate
@@ -546,10 +551,10 @@ impl RiscV32State {
                     const TEST_REG_REG_MASK: u32 = 0x20;
                     let is_r_type = instr & TEST_REG_REG_MASK != 0;
                     let rs1 = RTypeOpcode::rs1(instr); // same as IType
-                    let operand_1 = self.get_register(rs1);
+                    let operand_1 = self.get_first_register(rs1, proc_cycle, memory_tracer);
                     let operand_2 = if is_r_type {
                         let rs2 = BTypeOpcode::rs2(instr);
-                        self.get_register(rs2)
+                        self.get_second_register(rs2, proc_cycle, memory_tracer)
                     } else {
                         let mut imm = ITypeOpcode::imm(instr);
                         sign_extend(&mut imm, 12);
@@ -702,7 +707,7 @@ impl RiscV32State {
                     // so now we can just use full integer values for csr numbers
                     if funct3 & ZICSR_MASK != 0 {
                         let rs1_as_imm = ITypeOpcode::rs1(instr);
-                        let rs1 = self.get_register(rs1_as_imm);
+                        let rs1 = self.get_first_register(rs1_as_imm, proc_cycle, memory_tracer);
 
                         let mut write_val = rs1;
 
@@ -777,18 +782,12 @@ impl RiscV32State {
                         rd = 0;
                         // mainly we support WFI, MRET, ECALL and EBREAK
                         if csr_number == 0x105 {
-                            // WFI
-                            //MStatusRegister::set_mie(&mut self.machine_mode_trap_data.state.status);
                             self.extra_flags.set_wait_for_interrupt_bit();
                             self.pc = pc.wrapping_add(4u32);
                             return;
                         } else if csr_number == 0x302 {
                             // MRET
                             let existing_mstatus = self.machine_mode_trap_data.state.status;
-
-                            // let existing_flags = self.extra_flags;
-                            // let previous_virtualization_bit = MStatusRegister::mprv_aligned_bit(existing_mstatus);
-
                             let previous_privilege = MStatusRegister::mpp(existing_mstatus);
                             // MRET then in mstatus/mstatush sets MPV=0, MPP=0,
                             // MIE=MPIE, and MPIE=1. Lastly, MRET sets the privilege mode as previously determined, and
@@ -845,7 +844,7 @@ impl RiscV32State {
             // If there was a trap, do NOT allow register writeback.
             debug_assert_eq!(trap, TrapReason::NoTrap);
             // println!("Set x{:02} = 0x{:08x}", rd, ret_val);
-            self.set_register(rd, ret_val);
+            self.set_register(rd, ret_val, proc_cycle, memory_tracer);
 
             // traps below will update PC themself, so it only happens if we have NO trap
             pc = pc.wrapping_add(4u32);
@@ -887,7 +886,7 @@ impl RiscV32State {
         // for debugging
         self.sapt = mmu.read_sapt(current_privilege_mode, &mut trap);
 
-        let trap = trap.as_register_value();
+        //let trap = trap.as_register_value();
         //println!("end of cycle: PC = 0x{:08x}, trap = 0x{:08x}, interrupt = {:?}", self.pc, trap, trap & INTERRUPT_MASK != 0);
     }
 
@@ -899,37 +898,6 @@ impl RiscV32State {
         for chunk in self.registers.iter().enumerate().array_chunks::<4>() {
             for (idx, reg) in chunk.iter() {
                 print!("x{:02} = 0x{:08x}, ", idx, reg);
-            }
-            println!("");
-        }
-    }
-
-    pub fn stack_dump<
-        'a,
-        M: MemorySource,
-        MTR: MemoryAccessTracer,
-        MMU: MMUImplementation<M, MTR, AuxilarySource = MemoryImplementation<M, MTR>>,
-    >(
-        &'a self,
-        memory: &'a mut MemoryImplementation<M, MTR>,
-        mmu: &'a mut MMU,
-    ) {
-        let sp = self.registers[2];
-        let mut trap = TrapReason::NoTrap;
-        let current_privilege_mode = self.extra_flags.get_current_mode();
-        for i in 0..10 {
-            for j in 0..4 {
-                let offset = i * 4 + j;
-                let addr = sp.wrapping_add(offset * 4);
-                let addr = mmu.map_virtual_to_physical(
-                    addr,
-                    current_privilege_mode,
-                    AccessType::Load,
-                    memory,
-                    &mut trap,
-                );
-                let value = memory.read(addr, 4, AccessType::Load, &mut trap);
-                print!("SP-{} = 0x{:08x}, ", offset * 4, value);
             }
             println!("");
         }
