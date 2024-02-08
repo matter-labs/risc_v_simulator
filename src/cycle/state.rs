@@ -765,8 +765,8 @@ impl RiscV32State {
                             0x340 => self.machine_mode_trap_data.handling.scratch = write_val, // mscratch
                             0x341 => self.machine_mode_trap_data.handling.epc = write_val, // mepc
                             0x342 => self.machine_mode_trap_data.handling.cause = write_val, // mcause
-                            //0x343 => self.machine_mode_trap_data.handling.tval = write_val, // mtval
-                            //0x344 => self.machine_mode_trap_data.state.ip = write_val, // mip
+                            0x343 => self.machine_mode_trap_data.handling.tval = write_val, // mtval
+                            0x344 => self.machine_mode_trap_data.state.ip = write_val, // mip
                             NON_DETERMINISM_CSR => {
                                 non_determinism_source.write(write_val);
                             }
