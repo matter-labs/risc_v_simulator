@@ -7,13 +7,17 @@ pub fn main() {
     // dbg!(&args);
     // assert_eq!(args.len(), 2);
     // let path = &args[1];
+    println!("Hello, simulator!");
 
-    let path = "../zk_os/app.bin";
+    // let path = "../zk_os/app.bin";
     // let path = "../picorv32/firmware/firmware.bin";
+    // let path = "../test_riscv_programs/app.bin";
+    // let path = "../zk_ee/zk_os_test_example/app.bin";
+    let path = "../zk_ee/zk_os_test_example/app.bin";
 
     let mut file = std::fs::File::open(path).expect("must open provided file");
     let mut buffer = vec![];
     file.read_to_end(&mut buffer).expect("must read the file");
 
-    run_simple_simulator(buffer, 1 << 13);
+    run_simple_simulator(buffer, 30000);
 }

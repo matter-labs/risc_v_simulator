@@ -14,6 +14,7 @@ pub fn run_simple_simulator(os_image: Vec<u8>, cycles: usize) {
     let mut state = RiscV32State::initial(DEFAULT_ENTRY_POINT);
 
     assert_eq!(os_image.len() % 4, 0);
+    dbg!(os_image.len() / 4);
 
     let mut memory = VectorMemoryImpl::new_for_byte_size(1 << 32); // use full RAM
     for (word, dst) in os_image

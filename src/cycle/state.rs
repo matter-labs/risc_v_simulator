@@ -782,6 +782,7 @@ impl RiscV32State {
                         rd = 0;
                         // mainly we support WFI, MRET, ECALL and EBREAK
                         if csr_number == 0x105 {
+                            println!("WFI: proc_cycle: {:?}", proc_cycle);
                             self.extra_flags.set_wait_for_interrupt_bit();
                             self.pc = pc.wrapping_add(4u32);
                             return;
@@ -852,6 +853,7 @@ impl RiscV32State {
 
         // Handle traps and interrupts.
         if trap.is_a_trap() {
+            println!("trap: {:?}, pc: {:08x}, proc_cycle: {:?}, instr: {:08x}", trap, pc, proc_cycle, instr);
             let trap = trap.as_register_value();
             if trap & INTERRUPT_MASK != 0 {
                 // interrupt, not a trap. Always machine level in our system
