@@ -2,10 +2,7 @@ use crate::abstractions::memory::MemoryAccessTracerImpl;
 use crate::abstractions::non_determinism::QuasiUARTSource;
 use crate::cycle::state::StateTracer;
 use crate::mmu::NoMMU;
-use crate::{
-    abstractions::memory::VectorMemoryImpl, cycle::state::RiscV32State, mmio::MMIOImplementation,
-};
-use std::collections::VecDeque;
+use crate::{abstractions::memory::VectorMemoryImpl, cycle::state::RiscV32State};
 
 pub const DEFAULT_ENTRY_POINT: u32 = 0x01000000;
 pub const CUSTOM_ENTRY_POINT: u32 = 0;
@@ -46,7 +43,6 @@ pub fn run_simulator_with_traces(
 ) -> (StateTracer, MemoryAccessTracerImpl) {
     let mut state = RiscV32State::initial(CUSTOM_ENTRY_POINT);
     let mut state_tracer = StateTracer::new();
-    let memory_tracer = MemoryAccessTracerImpl::new();
     state_tracer.insert(0, state);
 
     assert_eq!(os_image.len() % 4, 0);

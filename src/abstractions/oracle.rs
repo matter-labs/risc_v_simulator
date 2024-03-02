@@ -3,17 +3,17 @@
 use std::pin::Pin;
 use zk_ee::system::kv_markers::UsizeDeserializable;
 use zk_ee::system::system_io_oracle::*;
-use zk_ee::system::types_config::EthereumIOTypesConfig;
-use zk_ee::system::{system_io_oracle::IOOracle, types_config::SystemIOTypesConfig};
+use zk_ee::system::types_config::*;
 
-use super::non_determinism::{NonDeterminismCSRSource, QuasiUARTSource};
+use super::non_determinism::NonDeterminismCSRSource;
 
 pub struct ZkEEOracleWrapper<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>> {
     // unfortunately self-ref
-    pub current_iterator: Option<O::MarkerTiedIterator<'this>>,
-    pub oracle: Pin<Box<O>>,
-    pub query_buffer: Option<QueryBuffer>,
-    pub high_half: Option<u32>,
+    current_iterator: Option<O::MarkerTiedIterator<'this>>,
+    oracle: O,
+    query_buffer: Option<QueryBuffer>,
+    high_half: Option<u32>,
+    _marker: std::marker::PhantomPinned,
 }
 
 impl<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>> Drop
@@ -27,7 +27,7 @@ impl<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>> Drop
     }
 }
 
-pub struct QueryBuffer {
+struct QueryBuffer {
     query_type: u32,
     remaining_len: Option<usize>,
     write_low: bool,
@@ -35,7 +35,7 @@ pub struct QueryBuffer {
 }
 
 impl QueryBuffer {
-    pub fn empty_for_query_type(query_type: u32) -> Self {
+    fn empty_for_query_type(query_type: u32) -> Self {
         Self {
             query_type,
             remaining_len: None,
@@ -44,7 +44,7 @@ impl QueryBuffer {
         }
     }
 
-    pub fn write(&mut self, value: u32) -> bool {
+    fn write(&mut self, value: u32) -> bool {
         // NOTE: we have to match between 32 bit inner env and 64 bit outer env
         if let Some(remaining_len) = self.remaining_len.as_mut() {
             if self.write_low {
@@ -67,13 +67,16 @@ impl QueryBuffer {
 impl<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>>
     ZkEEOracleWrapper<'this, IOTypes, O>
 {
-    pub fn new(oracle: O) -> Self {
-        Self {
+    pub fn new(oracle: O) -> Pin<Box<Self>> {
+        let inner = Self {
             current_iterator: None,
-            oracle: Box::pin(oracle),
+            oracle,
             query_buffer: None,
             high_half: None,
-        }
+            _marker: std::marker::PhantomPinned,
+        };
+
+        Box::pin(inner)
     }
 
     fn supported_query_ids() -> &'static [u32] {
@@ -105,13 +108,12 @@ impl<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>>
             NextTxSizeWords::ID => {
                 let params = <<NextTxSizeWords as OracleIteratorTypeMarker>::Params as UsizeDeserializable>::from_iter(&mut src_it).expect("must deserialize query params");
                 assert!(src_it.len() == 0);
-                unsafe {
-                    let oracle = self.oracle.as_mut().get_unchecked_mut();
-                    let it = oracle
-                        .make_iterator::<NextTxSizeWords>(params)
-                        .expect("must make an iterator");
-                    std::mem::transmute(it)
-                }
+                let it = self
+                    .oracle
+                    .make_iterator::<NextTxSizeWords>(params)
+                    .expect("must make an iterator");
+                // extend lifetime
+                unsafe { std::mem::transmute(it) }
             }
             UARTAccessMarker::ID => {
                 // just our old plain uart
@@ -126,14 +128,13 @@ impl<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>>
             self.current_iterator = Some(new_iterator)
         }
     }
-}
 
-// now we hook an access
-impl<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>> NonDeterminismCSRSource
-    for ZkEEOracleWrapper<'this, IOTypes, O>
-{
-    fn read(&mut self) -> u32 {
-        assert!(self.query_buffer.is_none());
+    fn read_impl(&mut self) -> u32 {
+        if self.query_buffer.is_some() || self.current_iterator.is_some() {
+            // take into account that CSRRW first reads, and then writes,
+            // so we should ignore it
+            return 0;
+        }
         if let Some(high) = self.high_half.take() {
             return high;
         }
@@ -152,7 +153,7 @@ impl<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>> NonDeterminismCS
         low
     }
 
-    fn write(&mut self, value: u32) {
+    fn write_impl(&mut self, value: u32) {
         if self.high_half.is_some() {
             // may have something from remains
             self.high_half = None;
@@ -171,11 +172,17 @@ impl<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>> NonDeterminismCS
     }
 }
 
-// fn usize_vec_to_u32_vec(src: Vec<usize>) -> Vec<u32> {
-//     unsafe {
-//         let (ptr, len, capacity) = src.into_raw_parts();
-//         assert!(std::mem::size_of::<usize>() = std::mem::size_of::<u32>() * 2);
+// now we hook an access
+impl<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>> NonDeterminismCSRSource
+    for Pin<Box<ZkEEOracleWrapper<'this, IOTypes, O>>>
+{
+    fn read(&mut self) -> u32 {
+        // Box<Pin<Self>> is not Unpin, so we will go unto project unchecked
+        unsafe { Pin::get_unchecked_mut(self.as_mut()).read_impl() }
+    }
 
-//         Vec::from_raw_parts(ptr.cast(), len * 2, capacity * 2)
-//     }
-// }
+    fn write(&mut self, value: u32) {
+        // Box<Pin<Self>> is not Unpin, so we will go unto project unchecked
+        unsafe { Pin::get_unchecked_mut(self.as_mut()).write_impl(value) }
+    }
+}

@@ -7,7 +7,7 @@ pub fn main() {
     // dbg!(&args);
     // assert_eq!(args.len(), 2);
     // let path = &args[1];
-    println!("Hello, simulator!");
+    println!("ZK RISC-V simulator is starting");
 
     // let path = "../zk_os/app.bin";
     // let path = "../picorv32/firmware/firmware.bin";
