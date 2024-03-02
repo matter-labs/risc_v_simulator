@@ -15,29 +15,68 @@ impl NonDeterminismCSRSource for ZeroedSource {
 
 use std::{collections::VecDeque, ffi::CString};
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct QuasiUARTSource {
     pub oracle: VecDeque<u32>,
-    pub buffer: Vec<u8>,
+    write_state: QuasiUARTSourceState,
 }
 
+impl Default for QuasiUARTSource {
+    fn default() -> Self {
+        Self {
+            oracle: VecDeque::new(),
+            write_state: QuasiUARTSourceState::Ready,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum QuasiUARTSourceState {
+    Ready,
+    Buffering {
+        remaining_len: Option<usize>,
+        buffer: Vec<u8>,
+    },
+}
 
 impl NonDeterminismCSRSource for QuasiUARTSource {
     fn read(&mut self) -> u32 {
-        self.oracle.pop_front().unwrap_or(0u32)
+        self.oracle.pop_front().unwrap()
     }
 
     fn write(&mut self, value: u32) {
-        self.buffer.extend(value.to_le_bytes());
-        let len = self.buffer.len();
-        for idx in (len - 4)..len {
-            if self.buffer[idx] == 0 {
-                // c-style string can be made
-                let mut buffer = std::mem::replace(&mut self.buffer, vec![]);
-                buffer.truncate(idx + 1);
-                let c_string = CString::from_vec_with_nul(buffer).unwrap();
-                println!("UART: `{}`", c_string.to_string_lossy());
-                break;
+        match &mut self.write_state {
+            QuasiUARTSourceState::Ready => {
+                self.write_state = QuasiUARTSourceState::Buffering {
+                    remaining_len: None,
+                    buffer: Vec::new(),
+                };
+            }
+            QuasiUARTSourceState::Buffering {
+                remaining_len,
+                buffer,
+            } => {
+                let mut reset = false;
+                if let Some(remaining_len) = remaining_len.as_mut() {
+                    if *remaining_len >= 4 {
+                        buffer.extend(value.to_le_bytes());
+                        *remaining_len -= 4;
+                    } else {
+                        let remaining_len = *remaining_len;
+                        let bytes = value.to_le_bytes();
+                        buffer.extend_from_slice(&bytes[..remaining_len]);
+                        reset = true;
+                    }
+                } else {
+                    *remaining_len = Some(value as usize);
+                    buffer.reserve(value as usize);
+                }
+                if reset {
+                    let buffer = std::mem::replace(buffer, Vec::new());
+                    let string = String::from_utf8(buffer).unwrap();
+                    println!("UART: `{}`", string);
+                }
+                self.write_state = QuasiUARTSourceState::Ready;
             }
         }
     }
