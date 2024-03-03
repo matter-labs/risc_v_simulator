@@ -130,11 +130,14 @@ impl<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>>
     }
 
     fn read_impl(&mut self) -> u32 {
-        if self.query_buffer.is_some() || self.current_iterator.is_some() {
-            // take into account that CSRRW first reads, and then writes,
-            // so we should ignore it
-            return 0;
-        }
+        // We mocked reads, so it's filtered out before
+
+        // if self.query_buffer.is_some() || self.current_iterator.is_some() {
+        //     // take into account that CSRRW first reads, and then writes,
+        //     // so we should ignore it
+        //     return 0;
+        // }
+
         if let Some(high) = self.high_half.take() {
             return high;
         }

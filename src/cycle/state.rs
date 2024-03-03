@@ -745,7 +745,22 @@ impl RiscV32State {
                             //0xc00 => ret_val = self.cycle_counter as u32, // cycle
                             //0xf11 => ret_val = 0, // vendor ID, will come up later on,
                             NON_DETERMINISM_CSR => {
-                                ret_val = non_determinism_source.read();
+                                // to imporve oracle usability we can try to avoid read
+                                // if we intend to write, so check oracle config
+                                ret_val = if ND::SHOULD_MOCK_READS_BEFORE_WRITES {
+                                    if funct3 == 1 //CSRRW
+                                    || funct3 == 5 //CSRRWI
+                                    {
+                                        // we consider main intention to be write,
+                                        // so do NOT perform `read()`
+                                        0
+                                    } else {
+                                        // it's actually intended to read
+                                        non_determinism_source.read()
+                                    }
+                                } else {
+                                    non_determinism_source.read()
+                                };
                             }
                             _ => {
                                 trap = TrapReason::IllegalInstruction;

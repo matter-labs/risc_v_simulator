@@ -1,5 +1,7 @@
 // there is no interpretation of methods here, it's just read/write and that's all
 pub trait NonDeterminismCSRSource {
+    const SHOULD_MOCK_READS_BEFORE_WRITES: bool = true;
+
     fn read(&mut self) -> u32;
     fn write(&mut self, value: u32);
 }
@@ -47,13 +49,18 @@ impl QuasiUARTSource {
     const HELLO_VALUE: u32 = u32::MAX;
 
     pub fn get_possible_program_output(&self) -> [u32; 8] {
-        todo!()
+        let mut result = [0u32; 8];
+        for (dst, src) in result.iter_mut().zip(self.last_values_buffer.iter()) {
+            *dst = *src;
+        }
+
+        result
     }
 }
 
 impl NonDeterminismCSRSource for QuasiUARTSource {
     fn read(&mut self) -> u32 {
-        self.oracle.pop_front().unwrap_or(0)
+        self.oracle.pop_front().unwrap()
     }
 
     fn write(&mut self, value: u32) {
