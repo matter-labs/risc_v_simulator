@@ -7,7 +7,8 @@ edition = "2021"
 
 [dependencies]
 rand = "0.8.5"
-zk_ee = {git = "https://github.com/matter-labs/zk_ee", branch = "main", default-features = false}
+# zk_ee = {git = "https://github.com/matter-labs/zk_ee", branch = "main", default-features = false}
+zk_ee = { path = "../zk_ee/zk_ee", default-features = false }
 ringbuffer = "*"
 
 [[bin]]

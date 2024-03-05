@@ -1,6 +1,7 @@
 // there is no interpretation of methods here, it's just read/write and that's all
 pub trait NonDeterminismCSRSource {
     const SHOULD_MOCK_READS_BEFORE_WRITES: bool = true;
+    const SHOULD_IGNORE_WRITES_AFTER_READS: bool = true;
 
     fn read(&mut self) -> u32;
     fn write(&mut self, value: u32);

@@ -1,4 +1,5 @@
 use crate::abstractions::memory::MemoryAccessTracerImpl;
+use crate::abstractions::non_determinism::NonDeterminismCSRSource;
 use crate::abstractions::non_determinism::QuasiUARTSource;
 use crate::cycle::state::StateTracer;
 use crate::mmu::NoMMU;
@@ -8,7 +9,25 @@ pub const DEFAULT_ENTRY_POINT: u32 = 0x01000000;
 pub const CUSTOM_ENTRY_POINT: u32 = 0;
 
 pub fn run_simple_simulator(os_image: Vec<u8>, cycles: usize) {
-    let mut state = RiscV32State::initial(DEFAULT_ENTRY_POINT);
+    run_simple_with_entry_point(os_image, DEFAULT_ENTRY_POINT, cycles)
+}
+
+pub fn run_simple_with_entry_point(os_image: Vec<u8>, entry_point: u32, cycles: usize) {
+    run_simple_with_entry_point_and_non_determimism_source(
+        os_image,
+        entry_point,
+        cycles,
+        QuasiUARTSource::default(),
+    )
+}
+
+pub fn run_simple_with_entry_point_and_non_determimism_source(
+    os_image: Vec<u8>,
+    entry_point: u32,
+    cycles: usize,
+    mut non_determinism_source: impl NonDeterminismCSRSource,
+) {
+    let mut state = RiscV32State::initial(entry_point);
 
     assert_eq!(os_image.len() % 4, 0);
     dbg!(os_image.len() / 4);
@@ -16,12 +35,11 @@ pub fn run_simple_simulator(os_image: Vec<u8>, cycles: usize) {
     let mut memory = VectorMemoryImpl::new_for_byte_size(1 << 32); // use full RAM
     for (word, dst) in os_image
         .array_chunks::<4>()
-        .zip(memory.inner[((DEFAULT_ENTRY_POINT / 4) as usize)..].iter_mut())
+        .zip(memory.inner[((entry_point / 4) as usize)..].iter_mut())
     {
         *dst = u32::from_le_bytes(*word);
     }
 
-    let mut non_determinism_source = QuasiUARTSource::default();
     let mut memory_tracer = MemoryAccessTracerImpl::new();
     let mut mmu = NoMMU { sapt: 0 };
 

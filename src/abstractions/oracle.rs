@@ -12,6 +12,7 @@ pub struct ZkEEOracleWrapper<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IO
     current_iterator: Option<O::MarkerTiedIterator<'this>>,
     oracle: O,
     query_buffer: Option<QueryBuffer>,
+    iterator_len_to_indicate: Option<u32>,
     high_half: Option<u32>,
     _marker: std::marker::PhantomPinned,
 }
@@ -47,6 +48,7 @@ impl QueryBuffer {
     fn write(&mut self, value: u32) -> bool {
         // NOTE: we have to match between 32 bit inner env and 64 bit outer env
         if let Some(remaining_len) = self.remaining_len.as_mut() {
+            // println!("Writing word 0x{:08x} for query ID = 0x{:08x}", value, self.query_type);
             if self.write_low {
                 self.buffer.push(value as usize);
                 self.write_low = false;
@@ -58,8 +60,14 @@ impl QueryBuffer {
             *remaining_len -= 1;
             *remaining_len == 0
         } else {
+            // println!("Expecting {} words for query ID = 0x{:08x}", value, self.query_type);
             self.remaining_len = Some(value as usize);
-            false
+            if value == 0 {
+                // nothing else to expect
+                true
+            } else {
+                false
+            }
         }
     }
 }
@@ -72,6 +80,7 @@ impl<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>>
             current_iterator: None,
             oracle,
             query_buffer: None,
+            iterator_len_to_indicate: None,
             high_half: None,
             _marker: std::marker::PhantomPinned,
         };
@@ -103,9 +112,9 @@ impl<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>>
         let buffer = self.query_buffer.take().expect("must exist");
         let query_id = buffer.query_type;
         debug_assert!(Self::supported_query_ids().contains(&query_id));
-        let mut src_it = buffer.buffer.into_iter();
         let new_iterator: O::MarkerTiedIterator<'this> = match query_id {
             NextTxSizeWords::ID => {
+                let mut src_it = buffer.buffer.into_iter();
                 let params = <<NextTxSizeWords as OracleIteratorTypeMarker>::Params as UsizeDeserializable>::from_iter(&mut src_it).expect("must deserialize query params");
                 assert!(src_it.len() == 0);
                 let it = self
@@ -115,16 +124,49 @@ impl<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>>
                 // extend lifetime
                 unsafe { std::mem::transmute(it) }
             }
+            NewTxContentIterator::ID => {
+                todo!();
+            }
+            InitializeIOImplementerIterator::ID => {
+                let mut src_it = buffer.buffer.into_iter();
+                let params = <<InitializeIOImplementerIterator as OracleIteratorTypeMarker>::Params as UsizeDeserializable>::from_iter(&mut src_it).expect("must deserialize query params");
+                assert!(src_it.len() == 0);
+                let it = self
+                    .oracle
+                    .make_iterator::<InitializeIOImplementerIterator>(params)
+                    .expect("must make an iterator");
+                // extend lifetime
+                unsafe { std::mem::transmute(it) }
+            }
             UARTAccessMarker::ID => {
                 // just our old plain uart
-                todo!();
+                let output = buffer.buffer;
+                let u32_vec: Vec<u32> = output
+                    .into_iter()
+                    .flat_map(|el| [el as u32, (el >> 32) as u32])
+                    .collect();
+                assert!(u32_vec.len() > 0);
+                let len = u32_vec[0] as usize;
+                let mut string_bytes: Vec<u8> = u32_vec[1..]
+                    .iter()
+                    .flat_map(|el| el.to_le_bytes())
+                    .collect();
+                assert!(string_bytes.len() >= len);
+                string_bytes.truncate(len);
+                let string = String::from_utf8(string_bytes).unwrap();
+                println!("UART: {}", string);
+
+                return;
             }
             _ => {
                 panic!()
             }
         };
 
-        if new_iterator.len() > 0 {
+        let result_len = new_iterator.len() * 2; // NOTE for mismatch of 32/64 bit archs
+        self.iterator_len_to_indicate = Some(result_len as u32);
+
+        if result_len > 0 {
             self.current_iterator = Some(new_iterator)
         }
     }
@@ -132,11 +174,9 @@ impl<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>>
     fn read_impl(&mut self) -> u32 {
         // We mocked reads, so it's filtered out before
 
-        // if self.query_buffer.is_some() || self.current_iterator.is_some() {
-        //     // take into account that CSRRW first reads, and then writes,
-        //     // so we should ignore it
-        //     return 0;
-        // }
+        if let Some(iterator_len_to_indicate) = self.iterator_len_to_indicate.take() {
+            return iterator_len_to_indicate;
+        }
 
         if let Some(high) = self.high_half.take() {
             return high;
@@ -157,18 +197,33 @@ impl<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>>
     }
 
     fn write_impl(&mut self, value: u32) {
+        // may have something from remains
+        if self.current_iterator.is_some() {
+            self.current_iterator = None;
+        }
+        if self.iterator_len_to_indicate.is_some() {
+            self.iterator_len_to_indicate = None;
+        }
         if self.high_half.is_some() {
-            // may have something from remains
             self.high_half = None;
         }
+
         if let Some(query_buffer) = self.query_buffer.as_mut() {
             let complete = query_buffer.write(value);
             if complete {
                 // we can make an iterator
+                // println!("Proceed query with ID = 0x{:08x}", query_buffer.query_type);
                 self.proceed_buffered_query();
             }
         } else {
-            assert!(Self::supported_query_ids().contains(&value));
+            assert!(
+                Self::supported_query_ids().contains(&value),
+                "unknown query id = 0x{:08x}",
+                value
+            );
+            // let msg = format!("New query with ID = 0x{:08x}", value);
+            // dbg!(msg);
+            // println!("New query with ID = 0x{:08x}", value);
             let new_buffer = QueryBuffer::empty_for_query_type(value);
             self.query_buffer = Some(new_buffer);
         }
@@ -181,7 +236,10 @@ impl<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>> NonDeterminismCS
 {
     fn read(&mut self) -> u32 {
         // Box<Pin<Self>> is not Unpin, so we will go unto project unchecked
-        unsafe { Pin::get_unchecked_mut(self.as_mut()).read_impl() }
+        let value = unsafe { Pin::get_unchecked_mut(self.as_mut()).read_impl() };
+        println!("Read 0x{:08x}", value);
+
+        value
     }
 
     fn write(&mut self, value: u32) {

@@ -305,6 +305,7 @@ impl RiscV32State {
 
         let current_privilege_mode = self.extra_flags.get_current_mode();
         let mut pc = self.pc;
+        // println!("PC = 0x{:08x}", pc);
         let mut ret_val: u32 = 0;
         let mut trap = TrapReason::NoTrap;
         let mut instr: u32 = 0;
@@ -796,7 +797,19 @@ impl RiscV32State {
                             0x343 => self.machine_mode_trap_data.handling.tval = write_val, // mtval
                             0x344 => self.machine_mode_trap_data.state.ip = write_val, // mip
                             NON_DETERMINISM_CSR => {
-                                non_determinism_source.write(write_val);
+                                if ND::SHOULD_IGNORE_WRITES_AFTER_READS {
+                                    if funct3 == 2 //CSRRS
+                                    || funct3 == 3 //CSRRC
+                                    || funct3 == 6 //CSRRSI
+                                    || funct3 == 7 //CSRRCI 
+                                    {
+                                        // do nothing
+                                    } else {
+                                        non_determinism_source.write(write_val);
+                                    }
+                                } else {
+                                    non_determinism_source.write(write_val);
+                                }
                             }
                             _ => {
                                 trap = TrapReason::IllegalInstruction;
