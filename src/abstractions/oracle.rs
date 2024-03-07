@@ -1,5 +1,6 @@
 // Hook zk_ee IOOracle to be NonDeterminismCSRSource
 
+use ringbuffer::RingBuffer;
 use std::pin::Pin;
 use zk_ee::system::kv_markers::UsizeDeserializable;
 use zk_ee::system::system_io_oracle::*;
@@ -14,6 +15,8 @@ pub struct ZkEEOracleWrapper<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IO
     query_buffer: Option<QueryBuffer>,
     iterator_len_to_indicate: Option<u32>,
     high_half: Option<u32>,
+    is_connected_to_external_oracle: bool,
+    last_values_buffer: ringbuffer::ConstGenericRingBuffer<u32, 8>,
     _marker: std::marker::PhantomPinned,
 }
 
@@ -82,6 +85,8 @@ impl<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>>
             query_buffer: None,
             iterator_len_to_indicate: None,
             high_half: None,
+            is_connected_to_external_oracle: true,
+            last_values_buffer: ringbuffer::ConstGenericRingBuffer::new(),
             _marker: std::marker::PhantomPinned,
         };
 
@@ -90,7 +95,7 @@ impl<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>>
 
     fn supported_query_ids() -> &'static [u32] {
         let supported = &[
-            NextTxSizeWords::ID,
+            NextTxSize::ID,
             NewTxContentIterator::ID,
             InitializeIOImplementerIterator::ID,
             ProofForStorageReadIterator::<EthereumIOTypesConfig>::ID,
@@ -100,6 +105,7 @@ impl<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>>
             PreimageContentWordsIterator::ID,
             StartFrameFormalIterator::ID,
             EndFrameFormalIterator::ID,
+            DisconnectOracleFormalIterator::ID,
             UARTAccessMarker::ID,
         ];
 
@@ -113,19 +119,27 @@ impl<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>>
         let query_id = buffer.query_type;
         debug_assert!(Self::supported_query_ids().contains(&query_id));
         let new_iterator: O::MarkerTiedIterator<'this> = match query_id {
-            NextTxSizeWords::ID => {
+            NextTxSize::ID => {
                 let mut src_it = buffer.buffer.into_iter();
-                let params = <<NextTxSizeWords as OracleIteratorTypeMarker>::Params as UsizeDeserializable>::from_iter(&mut src_it).expect("must deserialize query params");
+                let params = <<NextTxSize as OracleIteratorTypeMarker>::Params as UsizeDeserializable>::from_iter(&mut src_it).expect("must deserialize query params");
                 assert!(src_it.len() == 0);
                 let it = self
                     .oracle
-                    .make_iterator::<NextTxSizeWords>(params)
+                    .make_iterator::<NextTxSize>(params)
                     .expect("must make an iterator");
                 // extend lifetime
                 unsafe { std::mem::transmute(it) }
             }
             NewTxContentIterator::ID => {
-                todo!();
+                let mut src_it = buffer.buffer.into_iter();
+                let params = <<NewTxContentIterator as OracleIteratorTypeMarker>::Params as UsizeDeserializable>::from_iter(&mut src_it).expect("must deserialize query params");
+                assert!(src_it.len() == 0);
+                let it = self
+                    .oracle
+                    .make_iterator::<NewTxContentIterator>(params)
+                    .expect("must make an iterator");
+                // extend lifetime
+                unsafe { std::mem::transmute(it) }
             }
             InitializeIOImplementerIterator::ID => {
                 let mut src_it = buffer.buffer.into_iter();
@@ -137,6 +151,88 @@ impl<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>>
                     .expect("must make an iterator");
                 // extend lifetime
                 unsafe { std::mem::transmute(it) }
+            }
+            ProofForStorageReadIterator::<EthereumIOTypesConfig>::ID => {
+                let mut src_it = buffer.buffer.into_iter();
+                let params = <<ProofForStorageReadIterator<EthereumIOTypesConfig> as OracleIteratorTypeMarker>::Params as UsizeDeserializable>::from_iter(&mut src_it).expect("must deserialize query params");
+                assert!(src_it.len() == 0);
+                let it = self
+                    .oracle
+                    .make_iterator::<ProofForStorageReadIterator<EthereumIOTypesConfig>>(params)
+                    .expect("must make an iterator");
+                // extend lifetime
+                unsafe { std::mem::transmute(it) }
+            }
+            ProofForStorageWriteIterator::<EthereumIOTypesConfig>::ID => {
+                let mut src_it = buffer.buffer.into_iter();
+                let params = <<ProofForStorageWriteIterator<EthereumIOTypesConfig> as OracleIteratorTypeMarker>::Params as UsizeDeserializable>::from_iter(&mut src_it).expect("must deserialize query params");
+                assert!(src_it.len() == 0);
+                let it = self
+                    .oracle
+                    .make_iterator::<ProofForStorageWriteIterator<EthereumIOTypesConfig>>(params)
+                    .expect("must make an iterator");
+                // extend lifetime
+                unsafe { std::mem::transmute(it) }
+            }
+            PreimageByteLenIterator::ID => {
+                let mut src_it = buffer.buffer.into_iter();
+                let params = <<PreimageByteLenIterator as OracleIteratorTypeMarker>::Params as UsizeDeserializable>::from_iter(&mut src_it).expect("must deserialize query params");
+                assert!(src_it.len() == 0);
+                let it = self
+                    .oracle
+                    .make_iterator::<PreimageByteLenIterator>(params)
+                    .expect("must make an iterator");
+                // extend lifetime
+                unsafe { std::mem::transmute(it) }
+            }
+            InitialStorageSlotDataIterator::<EthereumIOTypesConfig>::ID => {
+                let mut src_it = buffer.buffer.into_iter();
+                let params = <<InitialStorageSlotDataIterator::<EthereumIOTypesConfig> as OracleIteratorTypeMarker>::Params as UsizeDeserializable>::from_iter(&mut src_it).expect("must deserialize query params");
+                assert!(src_it.len() == 0);
+                let it = self
+                    .oracle
+                    .make_iterator::<InitialStorageSlotDataIterator<EthereumIOTypesConfig>>(params)
+                    .expect("must make an iterator");
+                // extend lifetime
+                unsafe { std::mem::transmute(it) }
+            }
+            PreimageContentWordsIterator::ID => {
+                let mut src_it = buffer.buffer.into_iter();
+                let params = <<PreimageContentWordsIterator as OracleIteratorTypeMarker>::Params as UsizeDeserializable>::from_iter(&mut src_it).expect("must deserialize query params");
+                assert!(src_it.len() == 0);
+                let it = self
+                    .oracle
+                    .make_iterator::<PreimageContentWordsIterator>(params)
+                    .expect("must make an iterator");
+                // extend lifetime
+                unsafe { std::mem::transmute(it) }
+            }
+            StartFrameFormalIterator::ID => {
+                let mut src_it = buffer.buffer.into_iter();
+                let params = <<StartFrameFormalIterator as OracleIteratorTypeMarker>::Params as UsizeDeserializable>::from_iter(&mut src_it).expect("must deserialize query params");
+                assert!(src_it.len() == 0);
+                let it = self
+                    .oracle
+                    .make_iterator::<StartFrameFormalIterator>(params)
+                    .expect("must make an iterator");
+                // extend lifetime
+                unsafe { std::mem::transmute(it) }
+            }
+            EndFrameFormalIterator::ID => {
+                let mut src_it = buffer.buffer.into_iter();
+                let params = <<EndFrameFormalIterator as OracleIteratorTypeMarker>::Params as UsizeDeserializable>::from_iter(&mut src_it).expect("must deserialize query params");
+                assert!(src_it.len() == 0);
+                // there is nothing to do here
+                let it = self
+                    .oracle
+                    .make_iterator::<EndFrameFormalIterator>(params)
+                    .expect("must make an iterator");
+                // extend lifetime
+                unsafe { std::mem::transmute(it) }
+            }
+            DisconnectOracleFormalIterator::ID => {
+                self.is_connected_to_external_oracle = false;
+                return;
             }
             UARTAccessMarker::ID => {
                 // just our old plain uart
@@ -158,8 +254,8 @@ impl<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>>
 
                 return;
             }
-            _ => {
-                panic!()
+            a @ _ => {
+                panic!("Can not proceed query with ID = 0x{:08x}", a);
             }
         };
 
@@ -173,6 +269,9 @@ impl<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>>
 
     fn read_impl(&mut self) -> u32 {
         // We mocked reads, so it's filtered out before
+        if self.is_connected_to_external_oracle == false {
+            return 0;
+        }
 
         if let Some(iterator_len_to_indicate) = self.iterator_len_to_indicate.take() {
             return iterator_len_to_indicate;
@@ -197,6 +296,8 @@ impl<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>>
     }
 
     fn write_impl(&mut self, value: u32) {
+        self.last_values_buffer.push(value);
+
         // may have something from remains
         if self.current_iterator.is_some() {
             self.current_iterator = None;
@@ -216,6 +317,12 @@ impl<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>>
                 self.proceed_buffered_query();
             }
         } else {
+            if self.is_connected_to_external_oracle == false {
+                if value != UARTAccessMarker::ID {
+                    // we are not interested in general to start another query
+                    return;
+                }
+            }
             assert!(
                 Self::supported_query_ids().contains(&value),
                 "unknown query id = 0x{:08x}",
@@ -228,6 +335,15 @@ impl<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>>
             self.query_buffer = Some(new_buffer);
         }
     }
+
+    pub fn get_possible_program_output(&self) -> [u32; 8] {
+        let mut result = [0u32; 8];
+        for (dst, src) in result.iter_mut().zip(self.last_values_buffer.iter()) {
+            *dst = *src;
+        }
+
+        result
+    }
 }
 
 // now we hook an access
@@ -237,7 +353,7 @@ impl<'this, IOTypes: SystemIOTypesConfig, O: IOOracle<IOTypes>> NonDeterminismCS
     fn read(&mut self) -> u32 {
         // Box<Pin<Self>> is not Unpin, so we will go unto project unchecked
         let value = unsafe { Pin::get_unchecked_mut(self.as_mut()).read_impl() };
-        println!("Read 0x{:08x}", value);
+        // println!("Read 0x{:08x}", value);
 
         value
     }

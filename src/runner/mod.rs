@@ -18,15 +18,15 @@ pub fn run_simple_with_entry_point(os_image: Vec<u8>, entry_point: u32, cycles: 
         entry_point,
         cycles,
         QuasiUARTSource::default(),
-    )
+    );
 }
 
-pub fn run_simple_with_entry_point_and_non_determimism_source(
+pub fn run_simple_with_entry_point_and_non_determimism_source<S: NonDeterminismCSRSource>(
     os_image: Vec<u8>,
     entry_point: u32,
     cycles: usize,
-    mut non_determinism_source: impl NonDeterminismCSRSource,
-) {
+    mut non_determinism_source: S,
+) -> S {
     let mut state = RiscV32State::initial(entry_point);
 
     assert_eq!(os_image.len() % 4, 0);
@@ -53,6 +53,8 @@ pub fn run_simple_with_entry_point_and_non_determimism_source(
             cycle as u32,
         );
     }
+
+    non_determinism_source
 }
 
 pub fn run_simulator_with_traces(

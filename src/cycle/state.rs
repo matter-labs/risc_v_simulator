@@ -444,13 +444,13 @@ impl RiscV32State {
                 0b0000011 => {
                     // LOAD
 
-                    if rd == 0 {
-                        // Exception raised: loads with a destination of x0 must still raise 
-                        // any exceptions and action any other side effects 
-                        // even though the load value is discarded
-                        trap = TrapReason::IllegalInstruction;
-                        break 'cycle_block;
-                    }
+                    // if rd == 0 {
+                    //     // Exception raised: loads with a destination of x0 must still raise 
+                    //     // any exceptions and action any other side effects 
+                    //     // even though the load value is discarded
+                    //     trap = TrapReason::IllegalInstruction;
+                    //     break 'cycle_block;
+                    // }
 
                     let mut imm = ITypeOpcode::imm(instr);
                     sign_extend(&mut imm, 12);
