@@ -9,3 +9,4 @@ pub mod mmio;
 pub mod mmu;
 pub mod runner;
 pub mod utils;
+pub mod sim;
