@@ -15,10 +15,11 @@ pub fn main() {
     // let path = "../zk_ee/zk_os_test_example/app.bin";
     // let path = "../zk_ee/zk_os_test_example/app.bin";
     let path = "../zk_ee/zk_os/app.bin";
+    let path_sym = "../zk_ee/zk_os/app.sym";
 
-    let mut file = std::fs::File::open(path).expect("must open provided file");
-    let mut buffer = vec![];
-    file.read_to_end(&mut buffer).expect("must read the file");
+    // let mut file = std::fs::File::open(path).expect("must open provided file");
+    // let mut buffer = vec![];
+    // file.read_to_end(&mut buffer).expect("must read the file");
 
-    run_simple_simulator(buffer, 1 << 22);
+    run_simple_simulator(path, Some(path_sym), 1 << 22);
 }
