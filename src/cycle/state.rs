@@ -1000,7 +1000,7 @@ impl RiscV32State {
     }
             };
 
-            let symbols = object.symbol_map();
+            // let symbols = object.symbol_map();
             let mut dwarf = addr2line::gimli::Dwarf::load(&mut load_section).unwrap();
 
 
@@ -1040,7 +1040,7 @@ impl RiscV32State {
                         let fun = f.function.unwrap();
                         println!("frame: {}", fun.raw_name().unwrap());
                         println!("denamgled: {}", fun.demangle().unwrap());
-                        println!("offset: {:?}", f.dw_die_offset.unwrap())
+                        println!("offset: {:?}", f.dw_die_offset.unwrap());
                     },
                     _ => break,
                 }

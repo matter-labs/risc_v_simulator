@@ -13,6 +13,7 @@ ringbuffer = "*"
 elf = "*"
 addr2line = "*"
 object = "*"
+memmap2 = "*"
 
 [[bin]]
 name = "runner"
