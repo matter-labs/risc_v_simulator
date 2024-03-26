@@ -152,7 +152,7 @@ impl IndexedMemQuery {
         }
     }
 }
-
+#[derive(Debug, Clone)]
 pub struct MemoryAccesesPerStep(pub [Option<MemQuery>; NUM_DIFFERENT_ACCESS_TYPES]);
 
 impl MemoryAccesesPerStep {
@@ -160,7 +160,7 @@ impl MemoryAccesesPerStep {
         MemoryAccesesPerStep([None; NUM_DIFFERENT_ACCESS_TYPES])
     }
 }
-
+#[derive(Debug, Clone)]
 pub struct MemoryAccessTracerImpl {
     pub memory_trace: HashMap<u32, MemoryAccesesPerStep>,
 }

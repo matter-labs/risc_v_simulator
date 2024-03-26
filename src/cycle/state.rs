@@ -5,7 +5,7 @@ use super::status_registers::*;
 use crate::abstractions::memory::{AccessType, MemoryAccessTracer, MemorySource};
 use crate::abstractions::non_determinism::NonDeterminismCSRSource;
 use crate::mmu::MMUImplementation;
-use crate::abstractions::{mem_read, mem_write};
+use crate::abstractions::{mem_read, mem_write, translator};
 
 use crate::utils::*;
 
@@ -276,7 +276,7 @@ impl RiscV32State {
     }
 
     pub fn cycle<
-        'a, M: MemorySource, MTR: MemoryAccessTracer, ND: NonDeterminismCSRSource, 
+        'a, M: MemorySource, MTR: MemoryAccessTracer + std::fmt::Debug + Clone , ND: NonDeterminismCSRSource, 
         MMU: MMUImplementation<M, MTR>
     >(
         &'a mut self,
@@ -313,7 +313,6 @@ impl RiscV32State {
                 debug_assert_eq!(trap, TrapReason::InstructionPageFault);
                 break 'cycle_block;
             }
-
             instr = mem_read(
                 memory_source,
                 memory_tracer,
@@ -323,7 +322,6 @@ impl RiscV32State {
                 proc_cycle,
                 &mut trap,
             );
-
             if trap.is_a_trap() {
                 // error during address translation
                 debug_assert_eq!(
@@ -567,7 +565,8 @@ impl RiscV32State {
                     if is_r_type && funct7 == 1 {
                         // RV32M - multiplication subset
                         ret_val = match funct3 {
-                            0 => { (operand_1 as i32).wrapping_mul(operand_2 as i32) as u32}, // signed MUL
+                            0 => { 
+                                (operand_1 as i32).wrapping_mul(operand_2 as i32) as u32}, // signed MUL
                             1 => { (((operand_1 as i32) as i64).wrapping_mul((operand_2 as i32) as i64) >> 32) as u32}, // MULH
                             2 => { (((operand_1 as i32) as i64).wrapping_mul(((operand_2 as u32) as u64) as i64) >> 32) as u32}, // MULHSU
                             3 => { ((operand_1 as u64).wrapping_mul(operand_2 as u64) >> 32) as u32}, // MULHU
@@ -846,7 +845,6 @@ impl RiscV32State {
             debug_assert_eq!(trap, TrapReason::NoTrap);
             // println!("Set x{:02} = 0x{:08x}", rd, ret_val);
             self.set_register(rd, ret_val, proc_cycle, memory_tracer);
-
             // traps below will update PC themself, so it only happens if we have NO trap
             pc = pc.wrapping_add(4u32);
         }
@@ -863,7 +861,7 @@ impl RiscV32State {
             } else {
                 self.machine_mode_trap_data.handling.cause = trap;
                 // TODO: here we have a freedom of what to put into tval. We place opcode value now, because PC will be placed into EPC below
-                self.machine_mode_trap_data.handling.tval = instr;
+                self.machine_mode_trap_data.handling.tval = translator(instr as u64) as u32;
             }
             // println!("Trapping at pc = 0x{:08x} into PC = 0x{:08x}. MECP is set to 0x{:08x}", pc, self.machine_mode_trap_data.setup.tvec, pc);
             // self.pretty_dump();
@@ -881,13 +879,12 @@ impl RiscV32State {
 
             // Enter machine mode
             self.extra_flags.set_mode(Mode::Machine);
-        }
 
+        }
         self.pc = pc;
 
         // for debugging
         self.sapt = mmu.read_sapt(current_privilege_mode, &mut trap);
-
         //let trap = trap.as_register_value();
         //println!("end of cycle: PC = 0x{:08x}, trap = 0x{:08x}, interrupt = {:?}", self.pc, trap, trap & INTERRUPT_MASK != 0);
     }
