@@ -47,8 +47,7 @@ where
             mmu,
             non_determinism_source,
             state: RiscV32State::initial(entry_point),
-            // cycles,
-            cycles: 561,
+            cycles,
             profiler: Profiler::new(path_sym, config.get_frequency_recip()),
         }
     }
@@ -56,7 +55,10 @@ where
     pub(crate) fn run(&mut self) {
 
         for cycle in 0 .. self.cycles as usize {
-            println!("***********************");
+            if cycle % 10000 == 0  {
+                println!("**** Cycle {} *********", cycle);
+            }
+            // println!("**** Pre cycle ********");
             self.profiler.pre_cycle(
                 &mut self.state,
                 &mut self.memory_source,
@@ -65,7 +67,7 @@ where
                 cycle as u32,
             );
 
-            println!("**** Running cycle ****");
+            // println!("**** Running cycle ****");
 
             self.state.cycle(
                 &mut self.memory_source,
@@ -75,14 +77,18 @@ where
                 cycle as u32,
             );
 
-            if cycle >= 482 { // fmt messing with s0
-            // if cycle >= 558 {
-                let mut input = String::new();
-                std::io::stdin().read_line(&mut input).unwrap();
-            }
+            // if cycle >= 482 { // fmt messing with s0
+            // // if cycle >= 558 {
+            //     let mut input = String::new();
+            //     std::io::stdin().read_line(&mut input).unwrap();
+            // }
         }
 
-        println!("stacktrace: {:#?}", self.profiler.stacktraces);
+        // println!("stacktrace: {:#?}", self.profiler.stacktraces);
+        //
+        self.profiler.print_stacktrace();
+
+
     }
 
     pub(crate) fn deconstruct(self) -> ND {
@@ -99,7 +105,7 @@ impl SimulatorConfig {
         SimulatorConfig { 
             // frequency_recip: 10
             // frequency_recip: 560
-            frequency_recip: 1
+            frequency_recip: 100
         }
     }
 
@@ -112,9 +118,9 @@ impl SimulatorConfig {
 }
 
 mod diag {
-    use std::{ collections::HashMap, hash::Hasher, mem::size_of, ops::Deref, path::{Path, PathBuf}, rc::Rc, sync::Arc};
+    use std::{ collections::HashMap, hash::Hasher, io::Write, mem::size_of, ops::Deref, path::{Path, PathBuf}, rc::Rc, sync::Arc};
 
-    use addr2line::{gimli::{self, DebugInfoOffset, Dwarf, EndianSlice, RunTimeEndian, SectionId, UnitOffset}, Context, Frame, LookupResult, SplitDwarfLoad};
+    use addr2line::{gimli::{self, CompleteLineProgram, DebugInfoOffset, Dwarf, EndianSlice, RunTimeEndian, SectionId, UnitOffset, UnitSectionOffset}, Context, Frame, LookupResult, SplitDwarfLoad};
     use memmap2::Mmap;
     use object::{File, Object, ObjectSection};
     use addr2line::LookupContinuation;
@@ -122,6 +128,8 @@ mod diag {
     use crate::{abstractions::{mem_read, memory::{MemoryAccessTracer, MemorySource}, non_determinism::NonDeterminismCSRSource}, cycle::{state::RiscV32State, status_registers::TrapReason}, mmu::MMUImplementation, qol::PipeOp as _};
 
     pub(crate) struct Profiler {
+        // Safety: DwarfCache references data in symbol info.
+        dwarf_cache: DwarfCache,
         symbol_info: Option<SymbolInfo>,
         frequency_recip: u32,
         pub stacktraces: StacktraceSet,
@@ -132,18 +140,24 @@ mod diag {
             symbol_path: Option<P>,
             frequency_recip: u32,
         ) -> Self {
+            let dwarf_cache = DwarfCache {
+                unit_data: HashMap::new()
+            };
+
             match symbol_path {
                 Some(p) => 
                     Self {
                         symbol_info: Some(SymbolInfo::new(p)),
                         frequency_recip,
                         stacktraces: StacktraceSet::new(),
+                        dwarf_cache
                     },
                 None =>
                     Self {
                         symbol_info: None,
                         frequency_recip: u32::MAX, // Single chunk on run.
                         stacktraces: StacktraceSet::new(),
+                        dwarf_cache
                     }
             }
         }
@@ -201,7 +215,8 @@ mod diag {
             MT: MemoryAccessTracer,
             MMU: MMUImplementation<MS, MT>,
         {
-            let symbol_info = self.symbol_info.as_ref().expect("Symbols weren't provided.");
+            let print = cycle == 4834585;
+            let symbol_info = self.symbol_info.as_mut().expect("Symbols weren't provided.");
 
             let mut callstack = Vec::with_capacity(6);
 
@@ -210,13 +225,18 @@ mod diag {
 
             let mut fp = state.registers[8];
 
-            println!("--- building callstack ---");
-            println!("pc: {:08x}", state.pc);
-            println!("cycle: {}", cycle);
+            if print {
+
+                println!("--- building callstack ---");
+                println!("pc: {:08x}", state.pc);
+                println!("cycle: {}", cycle);
+            }
 
             // Saved frames
             loop {
-                println!("--- iter ---");
+                if print {
+                    println!("--- iter ---");
+                }
                 if fp == 0 { break; }
 
                 let mut trap = TrapReason::NoTrap;
@@ -229,6 +249,12 @@ mod diag {
                     memory_tracer,
                     cycle,
                     &mut trap);
+
+                if print {
+                    println!("fpp: {:08x}", fpp);
+                }
+                // TODO: remove once the issue with non complying functions is solved.
+                if fpp < 8 { break; }
 
                 let addr = mem_read(
                     memory_source,
@@ -248,11 +274,17 @@ mod diag {
                     cycle,
                     &mut trap); 
 
-                println!("addr: {:08x}", addr);
-                println!("next: {:08x}", next);
+                if print {
+                    println!("addr: {:08x}", addr);
+                    println!("next: {:08x}", next);
                 // if state.pc == 183156 { panic!("found"); }
-                if addr == 1 { panic!("addr is 1, pc: {}", state.pc); }
-                if addr == 1 { break; }
+                // if addr == 1 { panic!("addr is 1, pc: {:08x}", state.pc); }
+                // if addr == 1 { break; }
+                }
+
+                // TODO: Remove once the issue with non complying functions is solved.
+                if addr < 4 { break; }
+                if next as u64 == fpp { break; }
                 if addr == 0 { break; }
                 // assert_ne!(0, addr);
 
@@ -269,16 +301,23 @@ mod diag {
             let mut stackframes = Vec::with_capacity(8);
             let mut frame_refs = Vec::new();
 
-            println!("--- frame names ---");
+            // println!("--- frame names ---");
 
             for addr in callstack {
-                let frames = symbol_info.get_address_frames(addr);
+                let r = symbol_info.get_address_frames( &mut self.dwarf_cache, addr);
+
+                let (frames, section_offset) =
+                    match r {
+                    Some(r) => r,
+                    // None if stackframes.len() != 0 => panic!("Non top frame couldn't be retreived."),
+                    None => break,
+                };
                 // symbol_info.playground(addr);
 
                 for frame in frames {
-                    println!("  :: {}", frame.function.as_ref().unwrap().demangle().unwrap());
+                    // println!("  :: {}", frame.function.as_ref().unwrap().demangle().unwrap());
                     let offset = frame.dw_die_offset.unwrap();
-                    stackframes.push(offset);
+                    stackframes.push(FrameKey { section_offset, unit_offset: offset });
                     // symbol_info.is_address_traceable(addr, &frame);
                     // symbol_info.inspect_frame(addr, &frame);
                     frame_refs.push(frame);
@@ -287,12 +326,12 @@ mod diag {
             }
 
             if stackframes.len() == 0 { 
-                println!("No frames found, skipping.");
+                // println!("No frames found, skipping.");
                 return; 
             }
 
-            if symbol_info.is_address_traceable(state.pc as u64, &frame_refs[0]) == false {
-                println!("Non traceable location, skipping.");
+            if symbol_info.is_address_traceable(&self.dwarf_cache, state.pc as u64, &frame_refs[0]) == false {
+                // println!("Non traceable location, skipping.");
                 return;
             }
 
@@ -303,20 +342,81 @@ mod diag {
             }));
         }
 
+        pub(crate) fn print_stacktrace(&self) {
+            let mut file = match std::fs::File::create("/home/aikixd/temp/trace.csv") {
+                Err(why) => panic!("couldn't create file {}", why),
+                Ok(file) => file,
+            };
+
+            file.write("stacktrace,count\n".as_bytes());
+
+            for (st, c) in &self.stacktraces.traces {
+                // println!(" ----- Callstack start -----");
+
+                format!("{},\"", c).to(|x| file.write(x.as_bytes()));
+
+                for frame in &st.frames {
+
+                    format!(
+                        "{}\n", 
+                        self
+                            .dwarf_cache
+                            .unit_data
+                            .get(&frame.section_offset)
+                            .unwrap()
+                            .frames
+                            .get(&frame.unit_offset)
+                            .unwrap()
+                            .name)
+                        .as_bytes()
+                        .to(|x| file.write(x));
+                }
+
+                format!("\"\n").to(|x| file.write(x.as_bytes()));
+            }
+        }
+
 
         // fn pack_stacktraces(&self) {
         //     self.symbol_info.
         // }
     }
 
+    #[derive(Debug, PartialEq, Eq, Hash)]
+    struct FrameKey {
+        section_offset: UnitSectionOffset,
+        unit_offset: UnitOffset<usize>,
+    }
+
+    struct FrameInfo {
+        // Address of one instruction beyond last the prologue instruction.
+        prologue_end: u64,
+        // Address of the first epilogue instruction.
+        epilogue_begin: u64,
+        no_return: bool,
+        name: String,
+    }
+
+    struct UnitInfo<'a> {
+        line_program_complete: CompleteLineProgram<EndianSlice<'a, RunTimeEndian>, usize>,
+        line_sequences: Vec<gimli::LineSequence<EndianSlice<'a, RunTimeEndian>>>,
+        frames: HashMap<UnitOffset<usize>, FrameInfo>,
+    }
+
+    struct DwarfCache {
+        unit_data: HashMap<UnitSectionOffset, UnitInfo<'static>>,
+    }
+
     struct SymbolInfo {
         // Safety: Values must be dropped in the dependency order.
         ctx: Context<EndianSlice<'static, RunTimeEndian>>,
-        dwarf: Dwarf<EndianSlice<'static, RunTimeEndian>>,
+        // dwarf: Dwarf<EndianSlice<'static, RunTimeEndian>>,
         object: object::File<'static>,
+        // Holds the slice that all above fields reference.
         map: Mmap,
 
         frame_names: HashMap<UnitOffset<usize>, String>,
+
     }
 
     impl SymbolInfo {
@@ -351,144 +451,33 @@ mod diag {
 
             let ctx = Context::from_dwarf(dwarf).unwrap();
 
-            let dwarf = 
-                addr2line::gimli::Dwarf::load(load_section).unwrap();
+            // let dwarf = addr2line::gimli::Dwarf::load(load_section).unwrap();
 
             SymbolInfo {
                 map,
                 object,
-                dwarf,
                 ctx,
                 frame_names: HashMap::new(),
             }
         }
 
-        fn is_address_traceable(&self, address: u64, frame: &Frame<'_, EndianSlice<'_, RunTimeEndian>>) -> bool {
+        fn is_address_traceable(&self, cache: &DwarfCache, address: u64, frame: &Frame<'_, EndianSlice<'_, RunTimeEndian>>) -> bool {
 
-            let x = self.ctx.find_dwarf_and_unit(address).skip_all_loads();
-            if x.is_none() { return false; }
+            let (dw, unit) = 
+                self
+                .ctx
+                .find_dwarf_and_unit(address)
+                .skip_all_loads()
+                .expect("Frame existence implies unit.");
 
-            let (dw, unit) = x.unwrap();
-
-            let mut cursor = unit.entries_at_offset( frame.dw_die_offset.unwrap()).unwrap();
-            cursor.next_entry();
-            let die = cursor.current().unwrap();
-
-            if false { // print attrs
-
-                let mut attrs = die.attrs();
-
-                while let Ok(Some(attr)) = attrs.next() {
-
-                    println!("   {:x?} -> {:x?}", attr.name(), attr.value());
-
-                    match attr.name() {
-                        gimli::DW_AT_linkage_name | gimli::DW_AT_name => {
-
-                            let n = attr.value();
-
-                            match n {
-                                gimli::AttributeValue::DebugStrRef(n) => {
-                                    let s = dw.string(n).unwrap();
-                                    println!("      value: {}", s.to_string_lossy());
-                                },
-                                _ => {}
-                            }
-                        },
-
-                        gimli::DW_AT_frame_base => {
-                            match attr.value()  {
-                                gimli::AttributeValue::Exprloc(ex) => {
-                                    println!("expr decode");
-                                    let mut ops = ex.operations(unit.encoding());
-
-                                    while let Ok(Some(op)) = ops.next() {
-                                        println!("op: {:?}", op);
-                                    }
-                                },
-                                _ => {}
-                            }
-                        },
-                        gimli::DW_AT_specification => {
-                            match attr.value() {
-                                gimli::AttributeValue::UnitRef(other_offset) => {
-                                    let mut cursor = unit.entries_at_offset(other_offset).unwrap();
-                                    cursor.next_entry();
-                                    let die2 = cursor.current().unwrap();
-
-                                    let mut attrs = die2.attrs();
-
-                                    while let Ok(Some(attr)) = attrs.next() {
-
-                                        println!("   {:x?} -> {:x?}", attr.name(), attr.value());
-
-                                        match attr.name() {
-                                            gimli::DW_AT_linkage_name | gimli::DW_AT_name => {
-
-                                                let n = attr.value();
-
-                                                match n {
-                                                    gimli::AttributeValue::DebugStrRef(n) => {
-                                                        let s = dw.string(n).unwrap();
-                                                        println!("      value: {}", s.to_string_lossy());
-                                                    },
-                                                    _ => {}
-                                                }
-                                            },
-                                            _ => {}
-                                        };
-                                    }
-                                },
-                                _ => {}
-                            }
-                        },
-                        _ => {}
-                    }
-                }
-
-            }
-
-            let (line_program, sequences) = unit.line_program.clone().unwrap().clone().sequences().unwrap();
-            
-            let mut found = false;
-            let mut prologue_ended = false;
-            let mut epilogue_began = false;
-
-            for s in sequences {
-                if address >= s.start && address < s.end {
-                    println!("found seq: {:x} -> {:x}", s.start, s.end);
-
-                    let mut sm = line_program.resume_from(&s);
-
-                    while let Ok(Some((h, r))) = sm.next_row() {
-                        if r.address() > address {
-                            // Our address was included in the previous row.
-                            break;
-                        }
-
-                        let line_num = match r.line() {
-                            Some(r) => r.get(),
-                            None => 0
-                        };
-                        // println!("row addr {:08x}, line {}, stmt {}, prol_end {}, epi_start {},",
-                        //     r.address(), line_num, r.is_stmt(), r.prologue_end(), r.epilogue_begin());
-
-                        prologue_ended |= r.prologue_end();
-                        epilogue_began |= r.epilogue_begin();
-
-                    }
-
-                    found = true;
-                    break;
-                }
-
-            }
-
-            if found == false {
-                panic!("Address not in frame.");
-            }
-            
-            prologue_ended && epilogue_began == false
+            cache
+                .unit_data
+                .get(&unit.header.offset())
+                .expect("Unit info should've been created on frame loading.")
+                .frames
+                .get(&frame.dw_die_offset.unwrap())
+                .expect("Frame info should've been created on frame loading.")
+                .to(|x| address >= x.prologue_end && address < x.epilogue_begin)
         }
 
         fn inspect_frame(&self, address: u64, frame: &Frame<'_, EndianSlice<'_, RunTimeEndian>>) {
@@ -502,6 +491,19 @@ mod diag {
             cursor.next_entry();
             let die = cursor.current().unwrap();
 
+                let tag_n = match die.tag() {
+                    gimli::DW_TAG_subprogram =>
+                        "DW_TAG_subprogram".to_owned(),
+                    gimli::DW_TAG_inlined_subroutine =>
+                        "DW_TAG_inlined_subroutine".to_owned(),
+                    gimli::DW_TAG_variable =>
+                        "DW_TAG_variable".to_owned(),
+                    gimli::DW_TAG_formal_parameter =>
+                        "DW_TAG_formal_parameter".to_owned(),
+                    otherwise =>
+                        format!("{:x?}", otherwise)
+                };
+                println!("tag {:?}", tag_n);
 
                 let mut attrs = die.attrs();
 
@@ -683,7 +685,27 @@ mod diag {
             panic!("stop!");
         }
 
-        fn get_address_frames<'a>(&self, address: u64) -> Vec<Frame<'a, EndianSlice<'a, RunTimeEndian>>> {
+        fn get_address_frames<'a>(&'a self, cache: &mut DwarfCache, address: u64) -> Option<(Vec<Frame<'a, EndianSlice<'a, RunTimeEndian>>>, UnitSectionOffset)> {
+
+            let (dw, unit, unit_info) =
+            if let Some((dw, unit)) = self.ctx.find_dwarf_and_unit(address).skip_all_loads() {
+                let unit_locator = unit.header.offset();
+
+                let unit_info = cache.unit_data.entry(unit_locator).or_insert_with(|| {
+                    let (line_program, sequences) = unit.line_program.clone().unwrap().clone().sequences().unwrap();
+
+                    UnitInfo { 
+                        line_program_complete: line_program,
+                        line_sequences: sequences,
+                        frames: HashMap::new(),
+                    }
+                });
+
+                (dw, unit, unit_info)
+            } else {
+                return None
+            };
+
             let mut frames = self.ctx.find_frames(address);
 
             let mut frames = loop {
@@ -691,13 +713,13 @@ mod diag {
                     LookupResult::Output(r) => break r,
                     LookupResult::Load { load: _, continuation } => {
 
-                        // Not using split load.
+                        // Not using split DWARF.
                         frames = continuation.resume(None);
                     }
                 }
             }.unwrap();
 
-            let mut r = Vec::with_capacity(8);
+            let mut result = Vec::with_capacity(8);
 
             while let Ok(Some(frame)) = frames.next() {
                 // let frame = frame.unwrap();
@@ -713,14 +735,87 @@ mod diag {
                 //
                 //     _ => {}
                 // }
+                //
+                //
+
+                unit_info.frames.entry(frame.dw_die_offset.unwrap()).or_insert_with(|| {
+                    let sequence = &unit_info.line_sequences;
+                    for s in sequence {
+                        if address >= s.start && address < s.end {
+                            let mut sm = unit_info.line_program_complete.resume_from(&s);
+
+                            let mut prologue_end = None;
+                            let mut epilogue_begin = None;
+                            let mut no_return = false;
+                            let mut inlined = false;
+
+                            while let Ok(Some((_h, r))) = sm.next_row() {
+                                assert!(r.address() <= s.end);
+
+                                if r.prologue_end() { prologue_end = Some(r.address()) }
+                                if r.epilogue_begin() { epilogue_begin = Some(r.address()) }
+                            }
+
+                            // if epilogue_begin.is_none() { self.inspect_frame(address, &frame) }
+
+                            let cursor = 
+                                unit
+                                .entries_at_offset(frame.dw_die_offset.unwrap())
+                                .unwrap()
+                                .op(|x| { x.next_entry(); });
+
+                            let die =
+                                cursor
+                                .current()
+                                .unwrap();
+
+                            match die.tag() {
+                                gimli::DW_TAG_inlined_subroutine => inlined = true,
+                                _ => ()
+                            }
+
+                            let mut attrs = die.attrs();
+
+                            while let Ok(Some(attr)) = attrs.next() {
+                                // println!("attr {:?}", attr);
+                                match attr.name() {
+                                    gimli::DW_AT_noreturn if epilogue_begin.is_some() => 
+                                        panic!("Non returning functions shouln't have an epilogue."),
+                                    gimli::DW_AT_noreturn =>
+                                        no_return = true,
+                                    _ => (),
+                                }
+                            }
+
+                            return FrameInfo {
+                                prologue_end: prologue_end.expect(format!("A function must have a prologue. 0x{:08x}", address).as_str()),
+                                epilogue_begin: epilogue_begin.unwrap_or_else(|| {
+                                    u64::MAX
+                                    // if no_return || inlined { u64::MAX }
+                                    // else { 
+                                    //     self.inspect_frame(address, &frame);
+                                    //     panic!("A returning function must have an epilogue. 0x{:08x}", address) 
+                                    // }
+                                }),
+                                no_return,
+                                name: frame.function.as_ref().unwrap().demangle().unwrap().to_string()
+                            }
+                        }
+                    }
+
+                    panic!(
+                        "An line sequence was not found for frame {:?}, addr {}",
+                        frame.function.as_ref().unwrap().demangle(),
+                        address);
+                });
 
                 // Safety: The borrow checker assumes that the frame lives for 'const (derived from
                 // `ctx` field in `Self`). The actual lifetime is the lifetime of `self`. So we're
                 // adjusting the lifetime args in the return type accordingly.
-                unsafe { r.push(std::mem::transmute(frame)) };
+                unsafe { result.push(std::mem::transmute(frame)) };
             }
 
-            r
+            Some((result, unit.header.offset()))
         }
 
         // fn get_frame(&self) {
@@ -730,7 +825,7 @@ mod diag {
     
     #[derive(Debug)]
     struct Stacktrace {
-        frames: Vec<UnitOffset<usize>>
+        frames: Vec<FrameKey>,
     }
 
     impl PartialEq for Stacktrace {
@@ -750,7 +845,7 @@ mod diag {
     }
 
     impl Stacktrace {
-        pub(crate) fn new(frames: Vec<UnitOffset<usize>>) -> Self {
+        pub(crate) fn new(frames: Vec<FrameKey>) -> Self {
             assert_ne!(0, frames.len());
             Self { frames }
         }

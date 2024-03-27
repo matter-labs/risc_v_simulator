@@ -386,7 +386,7 @@ impl RiscV32State {
                     ret_val = pc.wrapping_add(4u32);
                     let jmp_addr = pc.wrapping_sub(4u32).wrapping_add(rel_addr);
 
-                    println!("c: {}, jal:  {:08x} -> {:08x}", proc_cycle, pc, jmp_addr);
+                    // println!("c: {}, jal:  {:08x} -> {:08x}", proc_cycle, pc, jmp_addr);
 
                     if jmp_addr & 0x3 != 0 {
                         // unaligned PC
@@ -409,7 +409,7 @@ impl RiscV32State {
                     // to the register rs1, then setting the least-significant bit of the result to zero
                     let jmp_addr = (reg_value.wrapping_add(imm) & !0x1).wrapping_sub(4u32);
 
-                    println!("c: {}, jalr: {:08x} -> {:08x}", proc_cycle, pc, jmp_addr);
+                    // println!("c: {}, jalr: {:08x} -> {:08x}", proc_cycle, pc, jmp_addr);
 
                     if jmp_addr & 0x3 != 0 {
                         // unaligned PC
