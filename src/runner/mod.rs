@@ -21,7 +21,9 @@ pub fn run_simple_with_entry_point(os_image: Vec<u8>, entry_point: u32, cycles: 
     );
 }
 
-pub fn run_simple_with_entry_point_and_non_determimism_source<S: NonDeterminismCSRSource>(
+pub fn run_simple_with_entry_point_and_non_determimism_source<
+    S: NonDeterminismCSRSource<VectorMemoryImpl>,
+>(
     os_image: Vec<u8>,
     entry_point: u32,
     cycles: usize,
@@ -43,6 +45,7 @@ pub fn run_simple_with_entry_point_and_non_determimism_source<S: NonDeterminismC
     let mut memory_tracer = MemoryAccessTracerImpl::new();
     let mut mmu = NoMMU { sapt: 0 };
 
+    let mut previous_pc = state.pc;
     for cycle in 0..cycles {
         // state.pretty_dump();
         state.cycle(
@@ -52,6 +55,11 @@ pub fn run_simple_with_entry_point_and_non_determimism_source<S: NonDeterminismC
             &mut non_determinism_source,
             cycle as u32,
         );
+        if state.pc == previous_pc {
+            println!("Took {} cycles to finish", cycle);
+            break;
+        }
+        previous_pc = state.pc;
     }
 
     non_determinism_source

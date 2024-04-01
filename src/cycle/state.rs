@@ -289,7 +289,7 @@ impl RiscV32State {
         'a,
         M: MemorySource,
         MTR: MemoryAccessTracer,
-        ND: NonDeterminismCSRSource,
+        ND: NonDeterminismCSRSource<M>,
         MMU: MMUImplementation<M, MTR>,
     >(
         &'a mut self,
@@ -805,10 +805,10 @@ impl RiscV32State {
                                     {
                                         // do nothing
                                     } else {
-                                        non_determinism_source.write(write_val);
+                                        non_determinism_source.write_with_memory_access(&*memory_source, write_val);
                                     }
                                 } else {
-                                    non_determinism_source.write(write_val);
+                                    non_determinism_source.write_with_memory_access(&*memory_source, write_val);
                                 }
                             }
                             _ => {
