@@ -1,10 +1,14 @@
 use std::path::Path;
+use std::path::PathBuf;
 
 use crate::abstractions::memory::MemoryAccessTracerImpl;
 use crate::abstractions::non_determinism::NonDeterminismCSRSource;
 use crate::abstractions::non_determinism::QuasiUARTSource;
 use crate::cycle::state::StateTracer;
 use crate::mmu::NoMMU;
+use crate::qol::PipeOp as _;
+use crate::sim::DiagnosticsConfig;
+use crate::sim::ProfilerConfig;
 use crate::sim::Simulator;
 use crate::sim::SimulatorConfig;
 use crate::{abstractions::memory::VectorMemoryImpl, cycle::state::RiscV32State};
@@ -46,7 +50,17 @@ where
     S: NonDeterminismCSRSource,
     P: AsRef<Path>,
 {
-    let config = SimulatorConfig::new();
+    let mut config = SimulatorConfig::default();
+    
+    config.diagnostics =
+        sym_path.map(|sym_path| {
+            DiagnosticsConfig::new(sym_path.as_ref().to_owned())
+            .op(|x| { x.profiler_config =
+                Some(ProfilerConfig::new(PathBuf::from("/home/aikixd/temp/trace.svg")))
+        })
+    });
+    // config.symbols_path = sym_path.map(|x| x.as_ref().to_path_buf());
+    // config.profiler_frequency_recip = 25;
     let memory_tracer = MemoryAccessTracerImpl::new();
     let mmu = NoMMU { sapt: 0 };
 
@@ -55,7 +69,6 @@ where
 
     let mut sim = Simulator::new(
         config,
-        sym_path,
         memory,
         memory_tracer,
         mmu,

@@ -19,7 +19,7 @@ pub(crate) struct Simulator<MS, MT, MMU, ND>
     state: RiscV32State,
     cycles: usize,
 
-    profiler: Profiler,
+    profiler: Option<Profiler>,
 
 }
 
@@ -30,9 +30,9 @@ where
     MMU: MMUImplementation<MS, MT>,
     ND: NonDeterminismCSRSource,
 {
-    pub(crate) fn new<P: AsRef<Path>>(
+    pub(crate) fn new(
         config: SimulatorConfig,
-        path_sym: Option<P>,
+        // path_sym: Option<P>,
         memory_source: MS,
         memory_tracer: MT,
         mmu: MMU,
@@ -48,26 +48,22 @@ where
             non_determinism_source,
             state: RiscV32State::initial(entry_point),
             cycles,
-            profiler: Profiler::new(path_sym, config.get_frequency_recip()),
+            profiler: Profiler::new(config),
         }
     }
 
     pub(crate) fn run(&mut self) {
 
         for cycle in 0 .. self.cycles as usize {
-            if cycle % 10000 == 0  {
-                println!("**** Cycle {} *********", cycle);
+            if let Some(profiler) = self.profiler.as_mut() {
+                profiler.pre_cycle(
+                    &mut self.state,
+                    &mut self.memory_source,
+                    &mut self.memory_tracer,
+                    &mut self.mmu,
+                    cycle as u32,
+                );
             }
-            // println!("**** Pre cycle ********");
-            self.profiler.pre_cycle(
-                &mut self.state,
-                &mut self.memory_source,
-                &mut self.memory_tracer,
-                &mut self.mmu,
-                cycle as u32,
-            );
-
-            // println!("**** Running cycle ****");
 
             self.state.cycle(
                 &mut self.memory_source,
@@ -76,19 +72,11 @@ where
                 &mut self.non_determinism_source,
                 cycle as u32,
             );
-
-            // if cycle >= 482 { // fmt messing with s0
-            // // if cycle >= 558 {
-            //     let mut input = String::new();
-            //     std::io::stdin().read_line(&mut input).unwrap();
-            // }
         }
 
-        // println!("stacktrace: {:#?}", self.profiler.stacktraces);
-        //
-        self.profiler.print_stacktrace();
-
-
+        if let Some(profiler) = self.profiler.as_mut() {
+            profiler.write_stacktrace();
+        }
     }
 
     pub(crate) fn deconstruct(self) -> ND {
@@ -96,29 +84,59 @@ where
     }
 }
 
+// #[derive(Default)]
 pub(crate) struct SimulatorConfig {
-    frequency_recip: u32,
+    pub diagnostics: Option<DiagnosticsConfig>,
 }
 
-impl SimulatorConfig {
-    pub(crate) fn new() -> Self {
-        SimulatorConfig { 
-            // frequency_recip: 10
-            // frequency_recip: 560
-            frequency_recip: 100
+pub(crate) struct DiagnosticsConfig {
+    symbols_path:PathBuf,
+    pub profiler_config: Option<ProfilerConfig>,
+}
+
+pub(crate) struct ProfilerConfig {
+    output_path:PathBuf,
+    pub frequency_recip: u32,
+
+}
+
+impl Default for SimulatorConfig {
+    fn default() -> Self {
+        Self { 
+            diagnostics: Default::default(),
         }
     }
+}
 
-    pub(crate) fn get_frequency_recip(&self) -> u32 {
-        env::var("RISCV_SIM_FREQUENCY_RECIP")
-            .ok()
-            .and_then(|val| val.parse().ok())
-            .unwrap_or(self.frequency_recip)
+impl DiagnosticsConfig {
+    pub fn new(symbols_path: PathBuf) -> Self {
+        Self { 
+            symbols_path, 
+            profiler_config: None 
+        }
     }
 }
 
+impl ProfilerConfig {
+    pub fn new(output_path: PathBuf) -> Self {
+        Self {
+            output_path,
+            frequency_recip: 100,
+        }
+    }
+}
+
+// impl SimulatorConfig {
+//     pub(crate) fn get_frequency_recip(&self) -> u32 {
+//         env::var("RISCV_SIM_FREQUENCY_RECIP")
+//             .ok()
+//             .and_then(|val| val.parse().ok())
+//             .unwrap_or(self.profiler_frequency_recip)
+//     }
+// }
+
 mod diag {
-    use std::{ collections::HashMap, hash::Hasher, io::Write, mem::size_of, ops::Deref, path::{Path, PathBuf}, rc::Rc, sync::Arc};
+    use std::{ collections::HashMap, hash::Hasher, io::Write, marker::PhantomData, mem::size_of, ops::Deref, path::{Path, PathBuf}, rc::Rc, sync::Arc};
 
     use addr2line::{gimli::{self, CompleteLineProgram, DebugInfoOffset, Dwarf, EndianSlice, RunTimeEndian, SectionId, UnitOffset, UnitSectionOffset}, Context, Frame, LookupResult, SplitDwarfLoad};
     use memmap2::Mmap;
@@ -127,58 +145,41 @@ mod diag {
 
     use crate::{abstractions::{mem_read, memory::{MemoryAccessTracer, MemorySource}, non_determinism::NonDeterminismCSRSource}, cycle::{state::RiscV32State, status_registers::TrapReason}, mmu::MMUImplementation, qol::PipeOp as _};
 
+    use super::SimulatorConfig;
+
+
     pub(crate) struct Profiler {
         // Safety: DwarfCache references data in symbol info.
         dwarf_cache: DwarfCache,
-        symbol_info: Option<SymbolInfo>,
+        symbol_info: SymbolInfo,
+        output_path: PathBuf,
         frequency_recip: u32,
         pub stacktraces: StacktraceSet,
     }
 
     impl Profiler {
-        pub(crate) fn new<P: AsRef<std::path::Path>>(
-            symbol_path: Option<P>,
-            frequency_recip: u32,
-        ) -> Self {
+        pub(crate) fn new(
+            config: SimulatorConfig,
+        ) -> Option<Self> {
             let dwarf_cache = DwarfCache {
                 unit_data: HashMap::new()
             };
 
-            match symbol_path {
-                Some(p) => 
-                    Self {
-                        symbol_info: Some(SymbolInfo::new(p)),
-                        frequency_recip,
-                        stacktraces: StacktraceSet::new(),
-                        dwarf_cache
-                    },
-                None =>
-                    Self {
-                        symbol_info: None,
-                        frequency_recip: u32::MAX, // Single chunk on run.
-                        stacktraces: StacktraceSet::new(),
-                        dwarf_cache
-                    }
+            if let Some(d) = config.diagnostics
+            && let Some(p) = d.profiler_config {
+                Self {
+                    symbol_info: SymbolInfo::new(d.symbols_path),
+                    frequency_recip: p.frequency_recip,
+                    stacktraces: StacktraceSet::new(),
+                    dwarf_cache,
+                    output_path: p.output_path,
+                }
+                .to(Some)
+            }
+            else {
+                None
             }
         }
-
-        // pub(crate) fn run<F: FnMut(u32)>(&mut self, mut f: F, cycles: u32) {
-        //     let cycles = cycles as usize;
-        //     let frequency_recip = self.frequency_recip as usize;
-        //
-        //     let cycles =
-        //         (0 .. cycles)
-        //         .step_by(frequency_recip)
-        //         .map(|x| (x .. (x + frequency_recip).min(cycles)).into_iter());
-        //
-        //     for chunk in cycles {
-        //         for cycle in chunk {
-        //             println!("cycle {}", cycle);
-        //             f(cycle as u32);
-        //         }
-        //         self.collect_stacktrace();
-        //     }
-        // }
 
         pub(crate) fn pre_cycle<MS, MT, MMU>(
             &mut self,
@@ -192,7 +193,7 @@ mod diag {
             MT: MemoryAccessTracer,
             MMU: MMUImplementation<MS, MT>,
         {
-            if cycle % self.frequency_recip == 0 
+            if  cycle % self.frequency_recip == 0 
             { 
                 self.collect_stacktrace(
                     state,
@@ -215,8 +216,7 @@ mod diag {
             MT: MemoryAccessTracer,
             MMU: MMUImplementation<MS, MT>,
         {
-            let print = cycle == 4834585;
-            let symbol_info = self.symbol_info.as_mut().expect("Symbols weren't provided.");
+            let symbol_info = &self.symbol_info;
 
             let mut callstack = Vec::with_capacity(6);
 
@@ -225,18 +225,8 @@ mod diag {
 
             let mut fp = state.registers[8];
 
-            if print {
-
-                println!("--- building callstack ---");
-                println!("pc: {:08x}", state.pc);
-                println!("cycle: {}", cycle);
-            }
-
             // Saved frames
             loop {
-                if print {
-                    println!("--- iter ---");
-                }
                 if fp == 0 { break; }
 
                 let mut trap = TrapReason::NoTrap;
@@ -250,9 +240,6 @@ mod diag {
                     cycle,
                     &mut trap);
 
-                if print {
-                    println!("fpp: {:08x}", fpp);
-                }
                 // TODO: remove once the issue with non complying functions is solved.
                 if fpp < 8 { break; }
 
@@ -274,19 +261,10 @@ mod diag {
                     cycle,
                     &mut trap); 
 
-                if print {
-                    println!("addr: {:08x}", addr);
-                    println!("next: {:08x}", next);
-                // if state.pc == 183156 { panic!("found"); }
-                // if addr == 1 { panic!("addr is 1, pc: {:08x}", state.pc); }
-                // if addr == 1 { break; }
-                }
-
                 // TODO: Remove once the issue with non complying functions is solved.
                 if addr < 4 { break; }
                 if next as u64 == fpp { break; }
                 if addr == 0 { break; }
-                // assert_ne!(0, addr);
 
                 // Subbing one instruction because the frame's return address point to instruction
                 // that follows the call, not the call itself. In case of inlining this can be
@@ -299,12 +277,10 @@ mod diag {
             }
 
             let mut stackframes = Vec::with_capacity(8);
-            let mut frame_refs = Vec::new();
+            // let mut frame_refs = Vec::new();
 
-            // println!("--- frame names ---");
-
-            for addr in callstack {
-                let r = symbol_info.get_address_frames( &mut self.dwarf_cache, addr);
+            for (i, addr) in callstack.iter().enumerate() {
+                let r = symbol_info.get_address_frames(&mut self.dwarf_cache, *addr);
 
                 let (frames, section_offset) =
                     match r {
@@ -312,68 +288,86 @@ mod diag {
                     // None if stackframes.len() != 0 => panic!("Non top frame couldn't be retreived."),
                     None => break,
                 };
-                // symbol_info.playground(addr);
 
                 for frame in frames {
-                    // println!("  :: {}", frame.function.as_ref().unwrap().demangle().unwrap());
                     let offset = frame.dw_die_offset.unwrap();
                     stackframes.push(FrameKey { section_offset, unit_offset: offset });
-                    // symbol_info.is_address_traceable(addr, &frame);
-                    // symbol_info.inspect_frame(addr, &frame);
-                    frame_refs.push(frame);
+                    // frame_refs.push(frame);
 
+                    if i == 0 && symbol_info.is_address_traceable(&self.dwarf_cache, state.pc as u64, &frame) {
+                        // We're in a service code.
+                        return;
+                    }
                 }
             }
 
             if stackframes.len() == 0 { 
-                // println!("No frames found, skipping.");
                 return; 
-            }
-
-            if symbol_info.is_address_traceable(&self.dwarf_cache, state.pc as u64, &frame_refs[0]) == false {
-                // println!("Non traceable location, skipping.");
-                return;
             }
 
             let stacktrace = Stacktrace::new(stackframes);
 
-            self.stacktraces.absorb(stacktrace, frame_refs.iter().map(|x|{
-                (x.dw_die_offset.unwrap(), x.function.as_ref().unwrap().demangle().unwrap())
-            }));
+            self.stacktraces.absorb(stacktrace);
         }
 
-        pub(crate) fn print_stacktrace(&self) {
-            let mut file = match std::fs::File::create("/home/aikixd/temp/trace.csv") {
+        pub(crate) fn write_stacktrace(&self) {
+            let mut file = match std::fs::File::create("/home/aikixd/temp/trace.svg") {
                 Err(why) => panic!("couldn't create file {}", why),
                 Ok(file) => file,
             };
 
-            file.write("stacktrace,count\n".as_bytes());
+            let mut mapped = Vec::with_capacity(self.stacktraces.traces.len());
+
+            // file.write("stacktrace,count\n".as_bytes());
 
             for (st, c) in &self.stacktraces.traces {
                 // println!(" ----- Callstack start -----");
+                //
+                let names =
+                    st
+                    .frames
+                    .iter()
+                    .rev()
+                    .map(|frame| {
+                        self.dwarf_cache.unit_data.get(&frame.section_offset).unwrap()
+                        .frames.get(&frame.unit_offset).unwrap().name.as_str()
+                    })
+                        .collect::<Vec<_>>()
+                    ;
+                names.join(";")
+                    .op(|x| 
+                        format!("{} {}", x, c)
+                        .to_owned()
+                        .to(|x| mapped.push(x)));
+                //
+                //
+                //
+                // format!("{},\"", c).to(|x| file.write(x.as_bytes()));
+                //
+                // for frame in &st.frames {
+                //
+                //     format!(
+                //         "{}\n", 
+                //         self
+                //             .dwarf_cache
+                //             .unit_data
+                //             .get(&frame.section_offset)
+                //             .unwrap()
+                //             .frames
+                //             .get(&frame.unit_offset)
+                //             .unwrap()
+                //             .name)
+                //         .as_bytes()
+                //         .to(|x| file.write(x));
+                // }
 
-                format!("{},\"", c).to(|x| file.write(x.as_bytes()));
-
-                for frame in &st.frames {
-
-                    format!(
-                        "{}\n", 
-                        self
-                            .dwarf_cache
-                            .unit_data
-                            .get(&frame.section_offset)
-                            .unwrap()
-                            .frames
-                            .get(&frame.unit_offset)
-                            .unwrap()
-                            .name)
-                        .as_bytes()
-                        .to(|x| file.write(x));
-                }
-
-                format!("\"\n").to(|x| file.write(x.as_bytes()));
+                // format!("\"\n").to(|x| file.write(x.as_bytes()));
             }
+
+            let mut opts = inferno::flamegraph::Options::default();
+        
+
+            inferno::flamegraph::from_lines(&mut opts, mapped.iter().map(|x| x.as_str()), file);
         }
 
 
@@ -416,7 +410,6 @@ mod diag {
         map: Mmap,
 
         frame_names: HashMap<UnitOffset<usize>, String>,
-
     }
 
     impl SymbolInfo {
@@ -851,29 +844,46 @@ mod diag {
         }
     }
 
+    // struct StacktraceIterator<'a, I: Iterator<Item = FrameKey>> {
+    //     // stacktrace: &'a Stacktrace,
+    //     dwarf_cache: &'a DwarfCache,
+    //     stacktrace_iter: I,
+    // }
+    //
+    // impl<'a, I: Iterator<Item = FrameKey>> Iterator for StacktraceIterator<'a, I> {
+    //     type Item = &'a str;
+    //
+    //     fn next(&mut self) -> Option<Self::Item> {
+    //         self
+    //             .stacktrace_iter
+    //             .next()
+    //             .map(|x| {
+    //                 kj
+    //             })
+    //     }
+    // }
+
+
     #[derive(Debug)]
     pub(crate) struct StacktraceSet {
-        names: HashMap<UnitOffset<usize>, String>,
+        // names: HashMap<UnitOffset<usize>, String>,
         traces: HashMap<Stacktrace, usize>,
     }
     
     impl StacktraceSet {
         fn new() -> Self {
             Self {
-                names: HashMap::new(),
+                // names: HashMap::new(),
                 traces: HashMap::new()
             }
         }
 
         
-        fn absorb<S, N>(&mut self, stacktrace: Stacktrace, names: N) 
-        where 
-            S: Deref<Target = str>, 
-            N: Iterator<Item = (UnitOffset<usize>, S)> 
+        fn absorb(&mut self, stacktrace: Stacktrace) 
         {
-            for (o, n) in names {
-                self.names.entry(o).or_insert(n.deref().to_owned());
-            }
+            // for (o, n) in names {
+            //     self.names.entry(o).or_insert(n.deref().to_owned());
+            // }
             self.traces.entry(stacktrace).and_modify(|x| *x += 1).or_insert(1);
         }
     }

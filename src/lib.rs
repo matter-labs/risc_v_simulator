@@ -2,6 +2,7 @@
 #![feature(array_chunks)]
 #![feature(iter_array_chunks)]
 #![feature(is_sorted)]
+#![feature(let_chains)]
 
 pub mod abstractions;
 pub mod cycle;
