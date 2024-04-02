@@ -1,6 +1,6 @@
 use std::{env, path::{Path, PathBuf}};
 
-use crate::{abstractions::{memory::{MemoryAccessTracer, MemorySource}, non_determinism::NonDeterminismCSRSource}, cycle::state::RiscV32State, mmu::MMUImplementation};
+use crate::{abstractions::{memory::{MemoryAccessTracer, MemorySource}, non_determinism::NonDeterminismCSRSource}, cycle::state::RiscV32State, mmu::MMUImplementation, runner::DEFAULT_ENTRY_POINT};
 
 use self::diag::Profiler;
 
@@ -32,13 +32,10 @@ where
 {
     pub(crate) fn new(
         config: SimulatorConfig,
-        // path_sym: Option<P>,
         memory_source: MS,
         memory_tracer: MT,
         mmu: MMU,
         non_determinism_source: ND,
-        entry_point: u32,
-        cycles: usize,
     ) -> Self 
     {
         Self {
@@ -46,8 +43,8 @@ where
             memory_tracer,
             mmu,
             non_determinism_source,
-            state: RiscV32State::initial(entry_point),
-            cycles,
+            state: RiscV32State::initial(config.entry_point),
+            cycles: config.cycles,
             profiler: Profiler::new(config),
         }
     }
@@ -85,28 +82,50 @@ where
 }
 
 // #[derive(Default)]
-pub(crate) struct SimulatorConfig {
+pub struct SimulatorConfig {
+    pub bin_path: PathBuf,
+    pub entry_point: u32,
+    pub cycles: usize,
     pub diagnostics: Option<DiagnosticsConfig>,
 }
 
-pub(crate) struct DiagnosticsConfig {
+impl SimulatorConfig {
+    pub fn simple<P: AsRef<Path>>(bin_path: P) -> Self {
+        Self::new(
+            bin_path.as_ref().to_owned(),
+            DEFAULT_ENTRY_POINT,
+            1 << 22,
+            None
+        )
+    }
+
+    pub fn new(
+        bin_path: PathBuf,
+        entry_point: u32,
+        cycles: usize,
+        diagnostics: Option<DiagnosticsConfig>
+    ) -> Self {
+        Self { 
+            bin_path,
+            entry_point,
+            cycles,
+            diagnostics,
+        } 
+    }
+}
+
+pub struct DiagnosticsConfig {
     symbols_path:PathBuf,
     pub profiler_config: Option<ProfilerConfig>,
 }
 
-pub(crate) struct ProfilerConfig {
-    output_path:PathBuf,
+pub struct ProfilerConfig {
+    output_path: PathBuf,
+    pub reverse_graph: bool,
     pub frequency_recip: u32,
 
 }
 
-impl Default for SimulatorConfig {
-    fn default() -> Self {
-        Self { 
-            diagnostics: Default::default(),
-        }
-    }
-}
 
 impl DiagnosticsConfig {
     pub fn new(symbols_path: PathBuf) -> Self {
@@ -121,19 +140,11 @@ impl ProfilerConfig {
     pub fn new(output_path: PathBuf) -> Self {
         Self {
             output_path,
+            reverse_graph: false,
             frequency_recip: 100,
         }
     }
 }
-
-// impl SimulatorConfig {
-//     pub(crate) fn get_frequency_recip(&self) -> u32 {
-//         env::var("RISCV_SIM_FREQUENCY_RECIP")
-//             .ok()
-//             .and_then(|val| val.parse().ok())
-//             .unwrap_or(self.profiler_frequency_recip)
-//     }
-// }
 
 mod diag {
     use std::{ collections::HashMap, hash::Hasher, io::Write, marker::PhantomData, mem::size_of, ops::Deref, path::{Path, PathBuf}, rc::Rc, sync::Arc};
@@ -147,13 +158,13 @@ mod diag {
 
     use super::SimulatorConfig;
 
-
     pub(crate) struct Profiler {
         // Safety: DwarfCache references data in symbol info.
         dwarf_cache: DwarfCache,
         symbol_info: SymbolInfo,
         output_path: PathBuf,
         frequency_recip: u32,
+        reverse_graph: bool,
         pub stacktraces: StacktraceSet,
     }
 
@@ -170,9 +181,10 @@ mod diag {
                 Self {
                     symbol_info: SymbolInfo::new(d.symbols_path),
                     frequency_recip: p.frequency_recip,
+                    reverse_graph: p.reverse_graph,
+                    output_path: p.output_path,
                     stacktraces: StacktraceSet::new(),
                     dwarf_cache,
-                    output_path: p.output_path,
                 }
                 .to(Some)
             }
@@ -277,7 +289,6 @@ mod diag {
             }
 
             let mut stackframes = Vec::with_capacity(8);
-            // let mut frame_refs = Vec::new();
 
             for (i, addr) in callstack.iter().enumerate() {
                 let r = symbol_info.get_address_frames(&mut self.dwarf_cache, *addr);
@@ -292,7 +303,6 @@ mod diag {
                 for frame in frames {
                     let offset = frame.dw_die_offset.unwrap();
                     stackframes.push(FrameKey { section_offset, unit_offset: offset });
-                    // frame_refs.push(frame);
 
                     if i == 0 && symbol_info.is_address_traceable(&self.dwarf_cache, state.pc as u64, &frame) {
                         // We're in a service code.
@@ -311,18 +321,14 @@ mod diag {
         }
 
         pub(crate) fn write_stacktrace(&self) {
-            let mut file = match std::fs::File::create("/home/aikixd/temp/trace.svg") {
+            let mut file = match std::fs::File::create(&self.output_path) {
                 Err(why) => panic!("couldn't create file {}", why),
                 Ok(file) => file,
             };
 
             let mut mapped = Vec::with_capacity(self.stacktraces.traces.len());
 
-            // file.write("stacktrace,count\n".as_bytes());
-
             for (st, c) in &self.stacktraces.traces {
-                // println!(" ----- Callstack start -----");
-                //
                 let names =
                     st
                     .frames
@@ -365,15 +371,12 @@ mod diag {
             }
 
             let mut opts = inferno::flamegraph::Options::default();
+
+            opts.reverse_stack_order = self.reverse_graph;
         
 
             inferno::flamegraph::from_lines(&mut opts, mapped.iter().map(|x| x.as_str()), file);
         }
-
-
-        // fn pack_stacktraces(&self) {
-        //     self.symbol_info.
-        // }
     }
 
     #[derive(Debug, PartialEq, Eq, Hash)]
@@ -388,6 +391,7 @@ mod diag {
         // Address of the first epilogue instruction.
         epilogue_begin: u64,
         no_return: bool,
+        is_inlined: bool,
         name: String,
     }
 
@@ -401,24 +405,25 @@ mod diag {
         unit_data: HashMap<UnitSectionOffset, UnitInfo<'static>>,
     }
 
+
+    #[allow(dead_code)] // Struct has data dependencies
     struct SymbolInfo {
         // Safety: Values must be dropped in the dependency order.
         ctx: Context<EndianSlice<'static, RunTimeEndian>>,
-        // dwarf: Dwarf<EndianSlice<'static, RunTimeEndian>>,
         object: object::File<'static>,
         // Holds the slice that all above fields reference.
-        map: Mmap,
+        mmap: Mmap,
 
-        frame_names: HashMap<UnitOffset<usize>, String>,
+        // frame_names: HashMap<UnitOffset<usize>, String>,
     }
 
     impl SymbolInfo {
         fn new<P: AsRef<Path>>(path: P) -> Self {
             let x = std::fs::File::open(path).unwrap();
-            let map = unsafe { memmap2::Mmap::map(&x).unwrap() };
+            let mmap = unsafe { memmap2::Mmap::map(&x).unwrap() };
 
             // Safety: map contains a raw pointer, so it is safe to move.
-            let object = object::File::parse(&*map).unwrap();
+            let object = object::File::parse(&*mmap).unwrap();
             let object = unsafe { std::mem::transmute::<_, File<'static>>(object) };
 
             let endian = match object.is_little_endian() {
@@ -447,16 +452,16 @@ mod diag {
             // let dwarf = addr2line::gimli::Dwarf::load(load_section).unwrap();
 
             SymbolInfo {
-                map,
+                mmap,
                 object,
                 ctx,
-                frame_names: HashMap::new(),
+                // frame_names: HashMap::new(),
             }
         }
 
         fn is_address_traceable(&self, cache: &DwarfCache, address: u64, frame: &Frame<'_, EndianSlice<'_, RunTimeEndian>>) -> bool {
 
-            let (dw, unit) = 
+            let (_dw, unit) = 
                 self
                 .ctx
                 .find_dwarf_and_unit(address)
@@ -473,6 +478,7 @@ mod diag {
                 .to(|x| address >= x.prologue_end && address < x.epilogue_begin)
         }
 
+        /// Prints a bunch of info about a frame to console.
         fn inspect_frame(&self, address: u64, frame: &Frame<'_, EndianSlice<'_, RunTimeEndian>>) {
 
             let x = self.ctx.find_dwarf_and_unit(address).skip_all_loads();
@@ -564,14 +570,6 @@ mod diag {
                                 _ => {}
                             }
                         },
-                        // gimli::DW_AT_abstract_origin => {
-                        //     match attr.value() {
-                        //         gimli::AttributeValue::UnitRef(r) => {
-                        //             let mut cursot = unit.entries_at_offset(r).unwrap();
-                        //         },
-                        //         _ => {}
-                        //     }
-                        // },
                         _ => {}
                     }
 
@@ -585,7 +583,7 @@ mod diag {
 
                     let mut sm = line_program.resume_from(&s);
 
-                    while let Ok(Some((h, r))) = sm.next_row() {
+                    while let Ok(Some((_h, r))) = sm.next_row() {
 
                         let line_num = match r.line() {
                             Some(r) => r.get(),
@@ -603,84 +601,9 @@ mod diag {
 
         }
 
-        fn playground(&self, address: u64) -> () {
-            let r = self.ctx.find_dwarf_and_unit(address).skip_all_loads();
-            if r.is_none() { return; }
-            let (dw, unit) = r.unwrap();
-            
-            println!("dwarf: unit name {}", unit.name.unwrap().to_string_lossy());
-
-            let mut count = 0;
-            let mut e_cursor = unit.entries();
-            while let Some(entry) = e_cursor.next_entry().unwrap() {
-                let die = e_cursor.current();
-                if die.is_none() { continue; }
-                let die = die.unwrap();
-
-                if matches!(die.tag(), gimli::DW_TAG_subprogram) == false
-                && matches!(die.tag(), gimli::DW_TAG_inlined_subroutine) == false{
-                    continue;
-                }
-
-                count += 1;
-
-                let tag_n = match die.tag() {
-                    gimli::DW_TAG_subprogram =>
-                        "DW_TAG_subprogram".to_owned(),
-                    gimli::DW_TAG_inlined_subroutine =>
-                        "DW_TAG_inlined_subroutine".to_owned(),
-                    gimli::DW_TAG_variable =>
-                        "DW_TAG_variable".to_owned(),
-                    gimli::DW_TAG_formal_parameter =>
-                        "DW_TAG_formal_parameter".to_owned(),
-                    otherwise =>
-                        format!("{:x?}", otherwise)
-                };
-                println!("dwarf: die: #{}, offset {:?}, tag {:?}", count, die.offset(), tag_n);
-
-                let mut attrs = die.attrs();
-
-                while let Ok(Some(attr)) = attrs.next() {
-
-                    println!("   {:x?} -> {:x?}", attr.name(), attr.value());
-
-                    match attr.name() {
-                        gimli::DW_AT_linkage_name | gimli::DW_AT_name => {
-                            
-                            let n = attr.value();
-
-                            match n {
-                                gimli::AttributeValue::DebugStrRef(n) => {
-                                    let s = dw.string(n).unwrap();
-                                    println!("      value: {}", s.to_string_lossy());
-                                },
-                                _ => {}
-                            }
-                        },
-                        _ => {}
-                    }
-                }
-
-                // let line_program = unit.line_program.as_ref().unwrap();
-            let (line_program, sequences) = unit.line_program.clone().unwrap().clone().sequences().unwrap();
-
-                for s in sequences {
-                    println!("seq: {:x} -> {:x}", s.start, s.end);
-                }
-
-                // dw.debug_line.program(offset, address_size, comp_dir, comp_name), address_size, comp_dir, comp_name)
-                
-            }
-
-            
-            // let ranges = dw.ranges(&unit, );
-
-            panic!("stop!");
-        }
-
         fn get_address_frames<'a>(&'a self, cache: &mut DwarfCache, address: u64) -> Option<(Vec<Frame<'a, EndianSlice<'a, RunTimeEndian>>>, UnitSectionOffset)> {
 
-            let (dw, unit, unit_info) =
+            let (_dw, unit, unit_info) =
             if let Some((dw, unit)) = self.ctx.find_dwarf_and_unit(address).skip_all_loads() {
                 let unit_locator = unit.header.offset();
 
@@ -740,7 +663,7 @@ mod diag {
                             let mut prologue_end = None;
                             let mut epilogue_begin = None;
                             let mut no_return = false;
-                            let mut inlined = false;
+                            let mut is_inlined = false;
 
                             while let Ok(Some((_h, r))) = sm.next_row() {
                                 assert!(r.address() <= s.end);
@@ -755,7 +678,7 @@ mod diag {
                                 unit
                                 .entries_at_offset(frame.dw_die_offset.unwrap())
                                 .unwrap()
-                                .op(|x| { x.next_entry(); });
+                                .op(|x| { x.next_entry().expect("A unit must exist at the provided offset."); });
 
                             let die =
                                 cursor
@@ -763,7 +686,7 @@ mod diag {
                                 .unwrap();
 
                             match die.tag() {
-                                gimli::DW_TAG_inlined_subroutine => inlined = true,
+                                gimli::DW_TAG_inlined_subroutine => is_inlined = true,
                                 _ => ()
                             }
 
@@ -791,6 +714,7 @@ mod diag {
                                     // }
                                 }),
                                 no_return,
+                                is_inlined,
                                 name: frame.function.as_ref().unwrap().demangle().unwrap().to_string()
                             }
                         }
@@ -810,10 +734,6 @@ mod diag {
 
             Some((result, unit.header.offset()))
         }
-
-        // fn get_frame(&self) {
-        //     self.dwarf.
-        // }
     }
     
     #[derive(Debug)]
@@ -821,13 +741,13 @@ mod diag {
         frames: Vec<FrameKey>,
     }
 
-    impl PartialEq for Stacktrace {
+    impl std::cmp::PartialEq for Stacktrace {
         fn eq(&self, other: &Self) -> bool {
             self.frames == other.frames
         }
     }
 
-    impl Eq for Stacktrace {}
+    impl std::cmp::Eq for Stacktrace {}
 
     impl std::hash::Hash for Stacktrace {
         fn hash<H: Hasher>(&self, state: &mut H) {
@@ -866,14 +786,12 @@ mod diag {
 
     #[derive(Debug)]
     pub(crate) struct StacktraceSet {
-        // names: HashMap<UnitOffset<usize>, String>,
         traces: HashMap<Stacktrace, usize>,
     }
     
     impl StacktraceSet {
         fn new() -> Self {
             Self {
-                // names: HashMap::new(),
                 traces: HashMap::new()
             }
         }
@@ -881,9 +799,6 @@ mod diag {
         
         fn absorb(&mut self, stacktrace: Stacktrace) 
         {
-            // for (o, n) in names {
-            //     self.names.entry(o).or_insert(n.deref().to_owned());
-            // }
             self.traces.entry(stacktrace).and_modify(|x| *x += 1).or_insert(1);
         }
     }

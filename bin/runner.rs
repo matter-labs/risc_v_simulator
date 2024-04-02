@@ -1,6 +1,6 @@
 use std::io::Read;
 
-use risc_v_simulator::runner::run_simple_simulator;
+use risc_v_simulator::{runner::{run_simple_simulator, DEFAULT_ENTRY_POINT}, sim::SimulatorConfig};
 
 pub fn main() {
     // let args: Vec<String> = std::env::args().collect();
@@ -20,6 +20,9 @@ pub fn main() {
     // let mut file = std::fs::File::open(path).expect("must open provided file");
     // let mut buffer = vec![];
     // file.read_to_end(&mut buffer).expect("must read the file");
+    //
+    let config = SimulatorConfig::simple("../zk_ee/zk_os/app.bin");
 
-    run_simple_simulator(path, Some(path_sym), 1 << 22);
+
+    run_simple_simulator(config);
 }

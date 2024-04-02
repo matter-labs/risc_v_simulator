@@ -16,67 +16,57 @@ use crate::{abstractions::memory::VectorMemoryImpl, cycle::state::RiscV32State};
 pub const DEFAULT_ENTRY_POINT: u32 = 0x01000000;
 pub const CUSTOM_ENTRY_POINT: u32 = 0;
 
-pub fn run_simple_simulator<P>(
-    bin_path: P,
-    sym_path: Option<P>,
-    cycles: usize) 
-where P: AsRef<Path> {
-    run_simple_with_entry_point(bin_path, sym_path, DEFAULT_ENTRY_POINT, cycles)
+pub fn run_simple_simulator(
+    config: SimulatorConfig,
+) {
+    run_simple_with_entry_point(config)
 }
 
-pub fn run_simple_with_entry_point<P>(
-    bin_path: P,
-    sym_path: Option<P>,
-    entry_point: u32,
-    cycles: usize) 
-where P: AsRef<Path> {
+pub fn run_simple_with_entry_point(
+    config: SimulatorConfig,
+) 
+{
     run_simple_with_entry_point_and_non_determimism_source(
-        bin_path,
-        sym_path,
-        entry_point,
-        cycles,
+        config,
         QuasiUARTSource::default(),
     );
 }
 
-pub fn run_simple_with_entry_point_and_non_determimism_source<S, P>(
-    bin_path: P,
-    sym_path: Option<P>,
-    entry_point: u32,
-    cycles: usize,
+pub fn run_simple_with_entry_point_and_non_determimism_source<S>(
+    config: SimulatorConfig,
+    // bin_path: P,
+    // sym_path: Option<P>,
+    // entry_point: u32,
+    // cycles: usize,
     non_determinism_source: S,
 ) -> S 
 where 
     S: NonDeterminismCSRSource,
-    P: AsRef<Path>,
 {
-    let mut config = SimulatorConfig::default();
-    
-    config.diagnostics =
-        sym_path.map(|sym_path| {
-            DiagnosticsConfig::new(sym_path.as_ref().to_owned())
-            .op(|x| { x.profiler_config =
-                Some(ProfilerConfig::new(PathBuf::from("/home/aikixd/temp/trace.svg")))
-        })
-    });
+    // let mut config = SimulatorConfig::default();
+    //
+    // config.diagnostics =
+    //     sym_path.map(|sym_path| {
+    //         DiagnosticsConfig::new(sym_path.as_ref().to_owned())
+    //         .op(|x| { x.profiler_config =
+    //             Some(ProfilerConfig::new(PathBuf::from("/home/aikixd/temp/trace.svg")))
+    //     })
+    // });
     // config.symbols_path = sym_path.map(|x| x.as_ref().to_path_buf());
     // config.profiler_frequency_recip = 25;
     let memory_tracer = MemoryAccessTracerImpl::new();
     let mmu = NoMMU { sapt: 0 };
 
     let mut memory = VectorMemoryImpl::new_for_byte_size(1 << 32); // use full RAM
-    memory.load_image(entry_point, read_bin(bin_path).into_iter());
+    memory.load_image(config.entry_point, read_bin(&config.bin_path).into_iter());
 
     let mut sim = Simulator::new(
         config,
         memory,
         memory_tracer,
         mmu,
-        non_determinism_source,
-        entry_point,
-        cycles);
-
-    // if let Some(p) = sym_path { sim.add_profiler(p, config.get_frequency_recip()) }
+        non_determinism_source
+    );
 
     sim.run();
 
