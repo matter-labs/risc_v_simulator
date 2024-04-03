@@ -52,7 +52,7 @@ pub fn run_simple_with_entry_point_and_non_determimism_source<
 
     sim.run(|_,_| {}, |_,_| {});
 
-    sim.deconstruct().1
+    sim.non_determinism_source
 }
 
 pub fn run_simulator_with_traces(
@@ -84,9 +84,7 @@ pub fn run_simulator_with_traces(
         state_tracer.insert(cycle + 1, sim.state);
     });
     
-    let (memory_tracer, _) = sim.deconstruct();
-
-    (state_tracer, memory_tracer)
+    (state_tracer, sim.memory_tracer)
 }
 
 fn read_bin<P: AsRef<Path>>(path: P) -> Vec<u8> {

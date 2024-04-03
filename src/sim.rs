@@ -11,10 +11,10 @@ pub(crate) struct Simulator<MS, MT, MMU, ND>
     MMU: MMUImplementation<MS, MT>,
     ND: NonDeterminismCSRSource<MS>,
 {
-    memory_source: MS,
-    memory_tracer: MT,
-    mmu: MMU,
-    non_determinism_source: ND,
+    pub(crate) memory_source: MS,
+    pub(crate) memory_tracer: MT,
+    pub(crate) mmu: MMU,
+    pub(crate) non_determinism_source: ND,
 
     pub(crate) state: RiscV32State,
     cycles: usize,
@@ -91,10 +91,6 @@ where
         if let Some(profiler) = self.profiler.as_mut() {
             profiler.write_stacktrace();
         }
-    }
-
-    pub(crate) fn deconstruct(self) -> (MT, ND) {
-        (self.memory_tracer, self.non_determinism_source)
     }
 }
 
