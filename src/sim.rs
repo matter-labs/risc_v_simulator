@@ -1,4 +1,4 @@
-use std::{env, path::{Path, PathBuf}};
+use std::{path::{Path, PathBuf}};
 
 use crate::{abstractions::{memory::{MemoryAccessTracer, MemorySource}, non_determinism::NonDeterminismCSRSource}, cycle::state::RiscV32State, mmu::MMUImplementation, runner::DEFAULT_ENTRY_POINT};
 
@@ -94,7 +94,6 @@ where
     }
 }
 
-// #[derive(Default)]
 pub struct SimulatorConfig {
     pub bin_path: PathBuf,
     pub entry_point: u32,
@@ -160,14 +159,14 @@ impl ProfilerConfig {
 }
 
 mod diag {
-    use std::{ collections::HashMap, hash::Hasher, io::Write, marker::PhantomData, mem::size_of, ops::Deref, path::{Path, PathBuf}, rc::Rc, sync::Arc};
+    use std::{ collections::HashMap, hash::Hasher, mem::size_of, path::{Path, PathBuf}};
 
-    use addr2line::{gimli::{self, CompleteLineProgram, DebugInfoOffset, Dwarf, EndianSlice, RunTimeEndian, SectionId, UnitOffset, UnitSectionOffset}, Context, Frame, LookupResult, SplitDwarfLoad};
+    use addr2line::{gimli::{self, CompleteLineProgram, EndianSlice, RunTimeEndian, SectionId, UnitOffset, UnitSectionOffset}, Context, Frame, LookupResult};
     use memmap2::Mmap;
     use object::{File, Object, ObjectSection};
     use addr2line::LookupContinuation;
 
-    use crate::{abstractions::{mem_read, memory::{MemoryAccessTracer, MemorySource}, non_determinism::NonDeterminismCSRSource}, cycle::{state::RiscV32State, status_registers::TrapReason}, mmu::MMUImplementation, qol::PipeOp as _};
+    use crate::{abstractions::{mem_read, memory::{MemoryAccessTracer, MemorySource}}, cycle::{state::RiscV32State, status_registers::TrapReason}, mmu::MMUImplementation, qol::PipeOp as _};
 
     use super::SimulatorConfig;
 
@@ -334,7 +333,7 @@ mod diag {
         }
 
         pub(crate) fn write_stacktrace(&self) {
-            let mut file = match std::fs::File::create(&self.output_path) {
+            let file = match std::fs::File::create(&self.output_path) {
                 Err(why) => panic!("couldn't create file {}", why),
                 Ok(file) => file,
             };
@@ -358,35 +357,11 @@ mod diag {
                         format!("{} {}", x, c)
                         .to_owned()
                         .to(|x| mapped.push(x)));
-                //
-                //
-                //
-                // format!("{},\"", c).to(|x| file.write(x.as_bytes()));
-                //
-                // for frame in &st.frames {
-                //
-                //     format!(
-                //         "{}\n", 
-                //         self
-                //             .dwarf_cache
-                //             .unit_data
-                //             .get(&frame.section_offset)
-                //             .unwrap()
-                //             .frames
-                //             .get(&frame.unit_offset)
-                //             .unwrap()
-                //             .name)
-                //         .as_bytes()
-                //         .to(|x| file.write(x));
-                // }
-
-                // format!("\"\n").to(|x| file.write(x.as_bytes()));
             }
 
             let mut opts = inferno::flamegraph::Options::default();
 
             opts.reverse_stack_order = self.reverse_graph;
-        
 
             inferno::flamegraph::from_lines(&mut opts, mapped.iter().map(|x| x.as_str()), file);
         }
@@ -426,8 +401,6 @@ mod diag {
         object: object::File<'static>,
         // Holds the slice that all above fields reference.
         mmap: Mmap,
-
-        // frame_names: HashMap<UnitOffset<usize>, String>,
     }
 
     impl SymbolInfo {
@@ -462,13 +435,10 @@ mod diag {
 
             let ctx = Context::from_dwarf(dwarf).unwrap();
 
-            // let dwarf = addr2line::gimli::Dwarf::load(load_section).unwrap();
-
             SymbolInfo {
                 mmap,
                 object,
                 ctx,
-                // frame_names: HashMap::new(),
             }
         }
 
@@ -651,22 +621,6 @@ mod diag {
             let mut result = Vec::with_capacity(8);
 
             while let Ok(Some(frame)) = frames.next() {
-                // let frame = frame.unwrap();
-
-                // self.frame_names.entry(frame.dw_die_offset.unwrap()).or_insert_with(||
-                // );
-
-                // match self.frame_names.entry(frame.dw_die_offset.unwrap()) {
-                //     entry @ std::collections::hash_map::Entry::Vacant(_) => {
-                //         let x = frame.function.as_ref().unwrap().demangle().unwrap().deref().to_owned();
-                //         entry.or_insert( x);
-                //     },
-                //
-                //     _ => {}
-                // }
-                //
-                //
-
                 unit_info.frames.entry(frame.dw_die_offset.unwrap()).or_insert_with(|| {
                     let sequence = &unit_info.line_sequences;
                     for s in sequence {
@@ -684,8 +638,6 @@ mod diag {
                                 if r.prologue_end() { prologue_end = Some(r.address()) }
                                 if r.epilogue_begin() { epilogue_begin = Some(r.address()) }
                             }
-
-                            // if epilogue_begin.is_none() { self.inspect_frame(address, &frame) }
 
                             let cursor = 
                                 unit
@@ -706,7 +658,6 @@ mod diag {
                             let mut attrs = die.attrs();
 
                             while let Ok(Some(attr)) = attrs.next() {
-                                // println!("attr {:?}", attr);
                                 match attr.name() {
                                     gimli::DW_AT_noreturn if epilogue_begin.is_some() => 
                                         panic!("Non returning functions shouln't have an epilogue."),
@@ -720,11 +671,6 @@ mod diag {
                                 prologue_end: prologue_end.expect(format!("A function must have a prologue. 0x{:08x}", address).as_str()),
                                 epilogue_begin: epilogue_begin.unwrap_or_else(|| {
                                     u64::MAX
-                                    // if no_return || inlined { u64::MAX }
-                                    // else { 
-                                    //     self.inspect_frame(address, &frame);
-                                    //     panic!("A returning function must have an epilogue. 0x{:08x}", address) 
-                                    // }
                                 }),
                                 no_return,
                                 is_inlined,
@@ -776,26 +722,6 @@ mod diag {
             Self { frames }
         }
     }
-
-    // struct StacktraceIterator<'a, I: Iterator<Item = FrameKey>> {
-    //     // stacktrace: &'a Stacktrace,
-    //     dwarf_cache: &'a DwarfCache,
-    //     stacktrace_iter: I,
-    // }
-    //
-    // impl<'a, I: Iterator<Item = FrameKey>> Iterator for StacktraceIterator<'a, I> {
-    //     type Item = &'a str;
-    //
-    //     fn next(&mut self) -> Option<Self::Item> {
-    //         self
-    //             .stacktrace_iter
-    //             .next()
-    //             .map(|x| {
-    //                 kj
-    //             })
-    //     }
-    // }
-
 
     #[derive(Debug)]
     pub(crate) struct StacktraceSet {
