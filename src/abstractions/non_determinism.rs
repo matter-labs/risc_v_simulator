@@ -1,24 +1,30 @@
 // there is no interpretation of methods here, it's just read/write and that's all
-pub trait NonDeterminismCSRSource {
+pub trait NonDeterminismCSRSource<M: MemorySource> {
     const SHOULD_MOCK_READS_BEFORE_WRITES: bool = true;
     const SHOULD_IGNORE_WRITES_AFTER_READS: bool = true;
 
     fn read(&mut self) -> u32;
-    fn write(&mut self, value: u32);
+
+    // we in general can allow CSR source to peek into memory (readonly)
+    // to perform adhoc computations to prepare result. This will allow to save on
+    // passing large structures
+    fn write_with_memory_access(&mut self, memory: &M, value: u32);
 }
 
 pub struct ZeroedSource;
 
-impl NonDeterminismCSRSource for ZeroedSource {
+impl<M: MemorySource> NonDeterminismCSRSource<M> for ZeroedSource {
     fn read(&mut self) -> u32 {
         0u32
     }
-    fn write(&mut self, _value: u32) {}
+    fn write_with_memory_access(&mut self, _memory: &M, _value: u32) {}
 }
 
 use std::collections::VecDeque;
 
 use ringbuffer::RingBuffer;
+
+use super::memory::MemorySource;
 
 #[derive(Clone, Debug)]
 pub struct QuasiUARTSource {
@@ -59,12 +65,12 @@ impl QuasiUARTSource {
     }
 }
 
-impl NonDeterminismCSRSource for QuasiUARTSource {
+impl<M: MemorySource> NonDeterminismCSRSource<M> for QuasiUARTSource {
     fn read(&mut self) -> u32 {
         self.oracle.pop_front().unwrap()
     }
 
-    fn write(&mut self, value: u32) {
+    fn write_with_memory_access(&mut self, _memory: &M, value: u32) {
         self.last_values_buffer.push(value);
         match &mut self.write_state {
             QuasiUARTSourceState::Ready => {

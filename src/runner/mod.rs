@@ -41,19 +41,8 @@ pub fn run_simple_with_entry_point_and_non_determimism_source<S>(
     non_determinism_source: S,
 ) -> S 
 where 
-    S: NonDeterminismCSRSource,
+    S: NonDeterminismCSRSource<VectorMemoryImpl>,
 {
-    // let mut config = SimulatorConfig::default();
-    //
-    // config.diagnostics =
-    //     sym_path.map(|sym_path| {
-    //         DiagnosticsConfig::new(sym_path.as_ref().to_owned())
-    //         .op(|x| { x.profiler_config =
-    //             Some(ProfilerConfig::new(PathBuf::from("/home/aikixd/temp/trace.svg")))
-    //     })
-    // });
-    // config.symbols_path = sym_path.map(|x| x.as_ref().to_path_buf());
-    // config.profiler_frequency_recip = 25;
     let memory_tracer = MemoryAccessTracerImpl::new();
     let mmu = NoMMU { sapt: 0 };
 
