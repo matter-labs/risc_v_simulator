@@ -16,7 +16,7 @@ pub(crate) struct Simulator<MS, MT, MMU, ND>
     mmu: MMU,
     non_determinism_source: ND,
 
-    state: RiscV32State,
+    pub(crate) state: RiscV32State,
     cycles: usize,
 
     profiler: Option<Profiler>,
@@ -32,6 +32,7 @@ where
 {
     pub(crate) fn new(
         config: SimulatorConfig,
+        state: RiscV32State,
         memory_source: MS,
         memory_tracer: MT,
         mmu: MMU,
@@ -43,13 +44,17 @@ where
             memory_tracer,
             mmu,
             non_determinism_source,
-            state: RiscV32State::initial(config.entry_point),
+            state,
             cycles: config.cycles,
             profiler: Profiler::new(config),
         }
     }
 
-    pub(crate) fn run(&mut self) {
+    pub(crate) fn run<FnPre, FnPost>(&mut self, mut fn_pre: FnPre, mut fn_post: FnPost)
+    where
+        FnPre: FnMut(&mut Self, usize),
+        FnPost: FnMut(&mut Self, usize)
+    {
 
         let mut previous_pc = self.state.pc;
 
@@ -64,6 +69,8 @@ where
                 );
             }
 
+            fn_pre(self, cycle);
+
             self.state.cycle(
                 &mut self.memory_source,
                 &mut self.memory_tracer,
@@ -71,6 +78,8 @@ where
                 &mut self.non_determinism_source,
                 cycle as u32,
             );
+
+            fn_post(self, cycle);
 
             if self.state.pc == previous_pc {
                 println!("Took {} cycles to finish", cycle);
@@ -84,8 +93,8 @@ where
         }
     }
 
-    pub(crate) fn deconstruct(self) -> ND {
-        self.non_determinism_source
+    pub(crate) fn deconstruct(self) -> (MT, ND) {
+        (self.memory_tracer, self.non_determinism_source)
     }
 }
 

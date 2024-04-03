@@ -34,6 +34,7 @@ pub fn run_simple_with_entry_point_and_non_determimism_source<
     non_determinism_source: S,
 ) -> S 
 {
+    let state = RiscV32State::initial(config.entry_point);
     let memory_tracer = MemoryAccessTracerImpl::new();
     let mmu = NoMMU { sapt: 0 };
 
@@ -42,51 +43,48 @@ pub fn run_simple_with_entry_point_and_non_determimism_source<
 
     let mut sim = Simulator::new(
         config,
+        state,
         memory,
         memory_tracer,
         mmu,
         non_determinism_source
     );
 
-    sim.run();
+    sim.run(|_,_| {}, |_,_| {});
 
-    sim.deconstruct()
+    sim.deconstruct().1
 }
 
 pub fn run_simulator_with_traces(
-    os_image: Vec<u8>,
-    cycles: usize,
-) -> (StateTracer, MemoryAccessTracerImpl) {
-    let mut state = RiscV32State::initial(CUSTOM_ENTRY_POINT);
-    let mut state_tracer = StateTracer::new();
-    state_tracer.insert(0, state);
-
-    assert_eq!(os_image.len() % 4, 0);
+    config: SimulatorConfig,
+) -> (StateTracer, MemoryAccessTracerImpl) 
+{
+    let state = RiscV32State::initial(CUSTOM_ENTRY_POINT);
+    let memory_tracer = MemoryAccessTracerImpl::new();
+    let mmu = NoMMU { sapt: state.sapt };
+    let non_determinism_source = QuasiUARTSource::default();
 
     let mut memory = VectorMemoryImpl::new_for_byte_size(1 << 32); // use full RAM
-    for (word, dst) in os_image
-        .array_chunks::<4>()
-        .zip(memory.inner[((CUSTOM_ENTRY_POINT / 4) as usize)..].iter_mut())
-    {
-        *dst = u32::from_le_bytes(*word);
-    }
+    memory.load_image(config.entry_point, read_bin(&config.bin_path).into_iter());
 
-    let mut mmu = NoMMU { sapt: state.sapt };
-    let mut non_determinism_source = QuasiUARTSource::default();
-    let mut memory_tracer = MemoryAccessTracerImpl::new();
+    let mut sim = Simulator::new(
+        config,
+        state,
+        memory,
+        memory_tracer,
+        mmu,
+        non_determinism_source
+    );
 
-    for i in 0..cycles {
-        // state.pretty_dump();
-        state.cycle(
-            &mut memory,
-            &mut memory_tracer,
-            &mut mmu,
-            &mut non_determinism_source,
-            i as u32,
-        );
-        println!("mtvec: {:?}", state.machine_mode_trap_data.setup.tvec);
-        state_tracer.insert(i + 1, state);
-    }
+    let mut state_tracer = StateTracer::new();
+    state_tracer.insert(0, sim.state);
+
+    sim.run(|_,_| {}, |sim, cycle| {
+        println!("mtvec: {:?}", sim.state.machine_mode_trap_data.setup.tvec);
+        state_tracer.insert(cycle + 1, sim.state);
+    });
+    
+    let (memory_tracer, _) = sim.deconstruct();
 
     (state_tracer, memory_tracer)
 }

@@ -55,8 +55,6 @@ pub trait MemorySource {
         trap: &mut TrapReason,
     );
     fn get(&self, phys_address: u64, access_type: AccessType, trap: &mut TrapReason) -> u32;
-
-    fn as_bytes(&self) -> &[u8];
 }
 
 pub struct VectorMemoryImpl {
@@ -126,16 +124,6 @@ impl MemorySource for VectorMemoryImpl {
                 _ => unreachable!(),
             }
         }
-    }
-
-    fn as_bytes(&self) -> &[u8] {
-        let x = unsafe {
-            std::slice::from_raw_parts(
-                self.inner.as_ptr() as *const u8,
-                self.inner.len() * 4)
-        };
-
-        x
     }
 }
 
