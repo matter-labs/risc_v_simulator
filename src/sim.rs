@@ -9,7 +9,7 @@ pub(crate) struct Simulator<MS, MT, MMU, ND>
     MS: MemorySource,
     MT: MemoryAccessTracer,
     MMU: MMUImplementation<MS, MT>,
-    ND: NonDeterminismCSRSource,
+    ND: NonDeterminismCSRSource<MS>,
 {
     memory_source: MS,
     memory_tracer: MT,
@@ -28,7 +28,7 @@ where
     MS: MemorySource,
     MT: MemoryAccessTracer,
     MMU: MMUImplementation<MS, MT>,
-    ND: NonDeterminismCSRSource,
+    ND: NonDeterminismCSRSource<MS>,
 {
     pub(crate) fn new(
         config: SimulatorConfig,
@@ -51,6 +51,8 @@ where
 
     pub(crate) fn run(&mut self) {
 
+        let mut previous_pc = self.state.pc;
+
         for cycle in 0 .. self.cycles as usize {
             if let Some(profiler) = self.profiler.as_mut() {
                 profiler.pre_cycle(
@@ -69,6 +71,12 @@ where
                 &mut self.non_determinism_source,
                 cycle as u32,
             );
+
+            if self.state.pc == previous_pc {
+                println!("Took {} cycles to finish", cycle);
+                break;
+            }
+            previous_pc = self.state.pc;
         }
 
         if let Some(profiler) = self.profiler.as_mut() {
