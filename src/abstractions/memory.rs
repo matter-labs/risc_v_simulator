@@ -74,6 +74,18 @@ impl VectorMemoryImpl {
         assert!(address % 4 == 0);
         self.inner[(address / 4) as usize] = value;
     }
+
+    pub fn load_image<'a, B>(&mut self, entry_point: u32, bytes: B)
+        where
+        B: Iterator<Item = u8>
+    {
+        for (word, dst) in bytes
+            .array_chunks::<4>()
+            .zip(self.inner[((entry_point / 4) as usize)..].iter_mut())
+            {
+                *dst = u32::from_le_bytes(word);
+            }
+    }
 }
 
 impl MemorySource for VectorMemoryImpl {

@@ -1,5 +1,11 @@
-use std::collections::HashMap;
+use std::any::Any;
+use std::borrow::Cow;
+use std::cell::RefCell;
+use std::collections::{vec_deque, HashMap};
 use std::hint::unreachable_unchecked;
+use std::io::Read;
+use std::mem::size_of;
+use std::sync::Arc;
 
 use super::status_registers::*;
 use crate::abstractions::memory::{AccessType, MemoryAccessTracer, MemorySource};
@@ -11,6 +17,9 @@ use crate::utils::*;
 
 use super::opcode_formats::*;
 
+use addr2line::{gimli, LookupContinuation, LookupResult, SplitDwarfLoad};
+use addr2line;
+use object::{Object, ObjectSection};
 use rand::Rng;
 
 pub const NUM_REGISTERS: usize = 32;
@@ -397,6 +406,7 @@ impl RiscV32State {
                     //  The target address is obtained by adding the 12-bit signed I-immediate 
                     // to the register rs1, then setting the least-significant bit of the result to zero
                     let jmp_addr = (reg_value.wrapping_add(imm) & !0x1).wrapping_sub(4u32);
+
                     if jmp_addr & 0x3 != 0 {
                         // unaligned PC
                         trap = TrapReason::InstructionAddressMisaligned;
@@ -898,6 +908,7 @@ impl RiscV32State {
                 "trap: {:?}, pc: {:08x}, proc_cycle: {:?}, instr: {:08x}",
                 trap, pc, proc_cycle, instr
             );
+
             let trap = trap.as_register_value();
             if trap & INTERRUPT_MASK != 0 {
                 // interrupt, not a trap. Always machine level in our system
