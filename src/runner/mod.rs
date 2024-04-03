@@ -1,14 +1,10 @@
 use std::path::Path;
-use std::path::PathBuf;
 
 use crate::abstractions::memory::MemoryAccessTracerImpl;
 use crate::abstractions::non_determinism::NonDeterminismCSRSource;
 use crate::abstractions::non_determinism::QuasiUARTSource;
 use crate::cycle::state::StateTracer;
 use crate::mmu::NoMMU;
-use crate::qol::PipeOp as _;
-use crate::sim::DiagnosticsConfig;
-use crate::sim::ProfilerConfig;
 use crate::sim::Simulator;
 use crate::sim::SimulatorConfig;
 use crate::{abstractions::memory::VectorMemoryImpl, cycle::state::RiscV32State};
@@ -32,16 +28,11 @@ pub fn run_simple_with_entry_point(
     );
 }
 
-pub fn run_simple_with_entry_point_and_non_determimism_source<S>(
+pub fn run_simple_with_entry_point_and_non_determimism_source<
+    S: NonDeterminismCSRSource<VectorMemoryImpl>> (
     config: SimulatorConfig,
-    // bin_path: P,
-    // sym_path: Option<P>,
-    // entry_point: u32,
-    // cycles: usize,
     non_determinism_source: S,
 ) -> S 
-where 
-    S: NonDeterminismCSRSource<VectorMemoryImpl>,
 {
     let memory_tracer = MemoryAccessTracerImpl::new();
     let mmu = NoMMU { sapt: 0 };

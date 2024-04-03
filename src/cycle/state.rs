@@ -386,8 +386,6 @@ impl RiscV32State {
                     ret_val = pc.wrapping_add(4u32);
                     let jmp_addr = pc.wrapping_sub(4u32).wrapping_add(rel_addr);
 
-                    // println!("c: {}, jal:  {:08x} -> {:08x}", proc_cycle, pc, jmp_addr);
-
                     if jmp_addr & 0x3 != 0 {
                         // unaligned PC
                         trap = TrapReason::InstructionAddressMisaligned;
@@ -408,8 +406,6 @@ impl RiscV32State {
                     //  The target address is obtained by adding the 12-bit signed I-immediate 
                     // to the register rs1, then setting the least-significant bit of the result to zero
                     let jmp_addr = (reg_value.wrapping_add(imm) & !0x1).wrapping_sub(4u32);
-
-                    // println!("c: {}, jalr: {:08x} -> {:08x}", proc_cycle, pc, jmp_addr);
 
                     if jmp_addr & 0x3 != 0 {
                         // unaligned PC
@@ -912,161 +908,6 @@ impl RiscV32State {
                 "trap: {:?}, pc: {:08x}, proc_cycle: {:?}, instr: {:08x}",
                 trap, pc, proc_cycle, instr
             );
-
-    //         println!("registers: {:#?}", self.registers);
-    //
-    //         let mut fp = self.registers[8];
-    //
-    //         let mut trace_addrs = Vec::<u32>::new();
-    //
-    //         loop {
-    //             println!("fp: {}", fp);
-    //             let mut inner_trap = TrapReason::NoTrap;
-    //             let fp_phys = mmu.map_virtual_to_physical(
-    //                 fp,
-    //                 current_privilege_mode,
-    //                 AccessType::MemLoad,
-    //                 memory_source,
-    //                 memory_tracer,
-    //                 proc_cycle,
-    //                 &mut inner_trap);
-    //
-    //             println!("fp_phys: {}", fp_phys);
-    //
-    //             let addr = mem_read(
-    //                 memory_source,
-    //                 memory_tracer,
-    //                 fp_phys - 4,
-    //                 4,
-    //                 AccessType::MemLoad,
-    //                 proc_cycle,
-    //                 &mut inner_trap);
-    //             let next = mem_read(
-    //                 memory_source,
-    //                 memory_tracer,
-    //                 fp_phys - 8,
-    //                 4,
-    //                 AccessType::MemLoad,
-    //                 proc_cycle,
-    //                 &mut inner_trap);
-    //
-    //             println!("addr: {:#x?}", addr);
-    //             println!("next: {:x?}", next);
-    //
-    //             if addr == 0 { break; }
-    //
-    //             fp = next;
-    //             trace_addrs.push(addr);
-    //
-    //             if next == 0 { break; }
-    //             println!("------------");
-    //         }
-    //
-    //         println!("{:#x?}", trace_addrs);
-    //
-    //         println!("----- reading image -----");
-    //
-    //         println!("{:#x?}", &memory_source.as_bytes()[..8]);
-    //
-    //         let file_data = std::fs::read("../zk_os/app.sym").expect("Could not read file.");
-    //         let slice = file_data.as_slice();
-    //
-    //         let elf_file = elf
-    //             ::ElfBytes::<elf::endian::AnyEndian>
-    //             ::minimal_parse(slice)
-    //             .expect("Memory should start with the a parceable image.");
-    //
-    //         let mut bytes = Box::new(Vec::new());
-    //         std::fs::File::open("../zk_os/app.sym").expect("expect sym file").read_to_end(&mut bytes);
-    //         let object = object::File::parse(bytes.as_slice()).expect("shoulod be parsale");
-    //
-    //         let endian = if object::read::File::is_little_endian(&object) {
-    //             gimli::RunTimeEndian::Little
-    //         } else {
-    //             gimli::RunTimeEndian::Big
-    //         };
-    //
-    //         let mut dwarf_section_data = RefCell::new(Vec::new());
-    //
-    //         let mut load_section = |id: gimli::SectionId| -> Result<_, ()> {
-    //             let name = id.name();
-    //             match object.section_by_name(name) {
-    //                 Some(section) => match section.uncompressed_data().unwrap() {
-    //                     Cow::Borrowed(b) => { 
-    //                         Ok(gimli::EndianSlice::new(b, endian)) 
-    //                     },
-    //                     Cow::Owned(b) => {
-    //                         dwarf_section_data.borrow_mut().copy_from_slice(&b);
-    //                         let r = unsafe { std::slice::from_raw_parts(dwarf_section_data.borrow().as_ptr(), dwarf_section_data.borrow().len()) };
-    //                         Ok(gimli::EndianSlice::new(r, endian))
-    //                     },
-    //                 },
-    //                 None => Ok(gimli::EndianSlice::new(&[][..], endian)),
-    // }
-    //         };
-    //
-    //         // let symbols = object.symbol_map();
-    //         let mut dwarf = addr2line::gimli::Dwarf::load(&mut load_section).unwrap();
-    //
-    //
-    //         let ctx = addr2line::Context::from_dwarf(dwarf).unwrap();
-    //
-    //         let r = ctx.find_location(trace_addrs[0] as u64);
-    //         let r = r.expect("failed to get loc");
-    //         let r = r.expect("empty location");
-    //         println!("addrres: {:?}", r.file);
-    //         let r = ctx.find_location(trace_addrs[1] as u64);
-    //         let r = r.expect("failed to get loc");
-    //         let r = r.expect("empty location");
-    //         println!("addrres: {:?}", r.file);
-    //
-    //         let mut r = ctx.find_frames(trace_addrs[0] as u64 - 4);
-    //         // let mut r = ctx.find_frames(pc as u64);
-    //
-    //         let do_split_dwarf_load = |
-    //             load: SplitDwarfLoad<gimli::EndianSlice<gimli::RunTimeEndian>>| ->
-    //             Option<Arc<gimli::Dwarf<gimli::EndianSlice<gimli::RunTimeEndian>>>> { None };
-    //         let r = loop {
-    //             match r {
-    //                 LookupResult::Output(r) => break r,
-    //                 LookupResult::Load { load, continuation } => {
-    //
-    //                     let dwo = do_split_dwarf_load(load);
-    //                     r = continuation.resume(dwo);
-    //                 }
-    //             }
-    //         };
-    //
-    //         let mut r = r.expect("couldn't get frames");
-    //
-    //         loop {
-    //
-    //             match r.next() {
-    //
-    //                 Ok(Some(f)) => {
-    //
-    //                     let fun = f.function.unwrap();
-    //                     println!("frame: {}", fun.raw_name().unwrap());
-    //                     println!("denamgled: {}", fun.demangle().unwrap());
-    //                     println!("offset: {:?}", f.dw_die_offset.unwrap());
-    //                 },
-    //                 _ => break,
-    //             }
-    //         }
-    //
-    //         // let abi_shdr: elf::section::SectionHeader = elf_file
-    //         //     .section_header_by_name(".note.gnu.build-id")
-    //         //     .expect("section table should be parseable")
-    //         //     .expect("file should have a .note.ABI-tag section");
-    //         //
-    //         // let notes: Vec<elf::note::Note> = elf_file
-    //         //     .section_data_as_notes(&abi_shdr)
-    //         //     .expect("Should be able to get note section data")
-    //         //     .collect();
-    //
-    //         // println!("{:#?}", notes);
-    //
-    //         panic!("test panic");
 
             let trap = trap.as_register_value();
             if trap & INTERRUPT_MASK != 0 {
