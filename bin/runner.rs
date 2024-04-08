@@ -1,6 +1,7 @@
-use std::io::Read;
-
-use risc_v_simulator::{runner::{run_simple_simulator, DEFAULT_ENTRY_POINT}, sim::SimulatorConfig};
+use risc_v_simulator::{
+    runner::{run_simple_simulator, DEFAULT_ENTRY_POINT},
+    sim::SimulatorConfig,
+};
 
 pub fn main() {
     // let args: Vec<String> = std::env::args().collect();
@@ -17,7 +18,6 @@ pub fn main() {
     let path = "../zk_ee/zk_os/app.bin";
 
     let config = SimulatorConfig::simple(path);
-
 
     run_simple_simulator(config);
 }

@@ -1,11 +1,5 @@
-use std::any::Any;
-use std::borrow::Cow;
-use std::cell::RefCell;
-use std::collections::{vec_deque, HashMap};
+use std::collections::HashMap;
 use std::hint::unreachable_unchecked;
-use std::io::Read;
-use std::mem::size_of;
-use std::sync::Arc;
 
 use super::status_registers::*;
 use crate::abstractions::memory::{AccessType, MemoryAccessTracer, MemorySource};
@@ -16,10 +10,6 @@ use crate::mmu::MMUImplementation;
 use crate::utils::*;
 
 use super::opcode_formats::*;
-
-use addr2line::{gimli, LookupContinuation, LookupResult, SplitDwarfLoad};
-use addr2line;
-use object::{Object, ObjectSection};
 use rand::Rng;
 
 pub const NUM_REGISTERS: usize = 32;

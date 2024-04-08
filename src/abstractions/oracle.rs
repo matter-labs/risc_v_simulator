@@ -246,6 +246,9 @@ where
             StartFrameFormalIterator::ID,
             EndFrameFormalIterator::ID,
             DisconnectOracleFormalIterator::ID,
+            ProofForIndexIterator::ID,
+            NeighboursIndexesIterator::ID,
+            ExactIndexIterator::ID,
             UARTAccessMarker::ID,
         ];
 
@@ -370,6 +373,39 @@ where
             DisconnectOracleFormalIterator::ID => {
                 self.is_connected_to_external_oracle = false;
                 return None;
+            }
+            ProofForIndexIterator::ID => {
+                let mut src_it = query.into_iter();
+                let params = <<ProofForIndexIterator as OracleIteratorTypeMarker>::Params as UsizeDeserializable>::from_iter(&mut src_it).expect("must deserialize query params");
+                assert!(src_it.len() == 0);
+                // there is nothing to do here
+                let it = self
+                    .oracle
+                    .make_iterator::<ProofForIndexIterator>(params)
+                    .expect("must make an iterator");
+                it
+            }
+            NeighboursIndexesIterator::ID => {
+                let mut src_it = query.into_iter();
+                let params = <<NeighboursIndexesIterator as OracleIteratorTypeMarker>::Params as UsizeDeserializable>::from_iter(&mut src_it).expect("must deserialize query params");
+                assert!(src_it.len() == 0);
+                // there is nothing to do here
+                let it = self
+                    .oracle
+                    .make_iterator::<NeighboursIndexesIterator>(params)
+                    .expect("must make an iterator");
+                it
+            }
+            ExactIndexIterator::ID => {
+                let mut src_it = query.into_iter();
+                let params = <<ExactIndexIterator as OracleIteratorTypeMarker>::Params as UsizeDeserializable>::from_iter(&mut src_it).expect("must deserialize query params");
+                assert!(src_it.len() == 0);
+                // there is nothing to do here
+                let it = self
+                    .oracle
+                    .make_iterator::<ExactIndexIterator>(params)
+                    .expect("must make an iterator");
+                it
             }
             UARTAccessMarker::ID => {
                 // just our old plain uart
