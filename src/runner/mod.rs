@@ -40,7 +40,7 @@ pub fn run_simple_simulator(os_image: Vec<u8>, cycles: usize) {
             &mut memory_tracer,
             &mut mmu,
             &mut non_determinism_source,
-            cycle as u32
+            cycle as u64
         );
     }
 }
@@ -80,7 +80,7 @@ pub fn run_simulator_with_traces(
             &mut memory_tracer,
             &mut mmu,
             &mut non_determinism_source,
-            i as u32
+            i as u64
         );
         println!("mtvec: {:?}", state.machine_mode_trap_data.setup.tvec);
         state_tracer.insert(i + 1, state);

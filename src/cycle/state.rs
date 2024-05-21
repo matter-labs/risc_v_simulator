@@ -248,7 +248,7 @@ impl RiscV32State {
     #[must_use]
     #[inline(always)]
     pub fn get_first_register<MTR: MemoryAccessTracer>(
-        &self, reg_idx: u32, proc_cycle: u32, memory_tracer: &mut MTR
+        &self, reg_idx: u32, proc_cycle: u64, memory_tracer: &mut MTR
     ) -> u32 {
         let res = self.registers[reg_idx as usize];
         memory_tracer.add_query(proc_cycle, AccessType::RegReadFirst, reg_idx as u64, res);
@@ -258,7 +258,7 @@ impl RiscV32State {
     #[must_use]
     #[inline(always)]
     pub fn get_second_register<MTR: MemoryAccessTracer>(
-        &self, reg_idx: u32, proc_cycle: u32, memory_tracer: &mut MTR
+        &self, reg_idx: u32, proc_cycle: u64, memory_tracer: &mut MTR
     ) -> u32 {
         let res = self.registers[reg_idx as usize];
         memory_tracer.add_query(proc_cycle, AccessType::RegReadSecond, reg_idx as u64, res);
@@ -267,7 +267,7 @@ impl RiscV32State {
 
     #[inline(always)]
     pub fn set_register<MTR: MemoryAccessTracer>(
-        &mut self, reg_idx: u32, value: u32, proc_cycle: u32, memory_tracer: &mut MTR
+        &mut self, reg_idx: u32, value: u32, proc_cycle: u64, memory_tracer: &mut MTR
     ) {
         if reg_idx != 0 {
             self.registers[reg_idx as usize] = value;
@@ -284,7 +284,7 @@ impl RiscV32State {
         memory_tracer: &'a mut MTR,
         mmu: &'a mut MMU,
         non_determinism_source: &mut ND,
-        proc_cycle: u32
+        proc_cycle: u64
     ) {
         if self.extra_flags.get_wait_for_interrupt() != 0 {
             return;

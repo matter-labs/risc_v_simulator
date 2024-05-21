@@ -14,7 +14,7 @@ pub trait MMUImplementation<M: MemorySource, MTR: MemoryAccessTracer> {
         access_type: AccessType,
         memory_source: &mut M, 
         tracer: &mut MTR,
-        proc_cycle: u32,
+        proc_cycle: u64,
         trap: &mut TrapReason,
     ) -> u64;
 }
@@ -172,7 +172,7 @@ impl<M: MemorySource, MTR: MemoryAccessTracer> MMUImplementation<M, MTR> for NoM
         _access_type: AccessType,
         _memory_source: &mut M, 
         _tracer: &mut MTR,
-        _proc_cycle: u32,
+        _proc_cycle: u64,
         _trap: &mut TrapReason,
     ) -> u64 {
         virt_address as u64
@@ -209,7 +209,7 @@ impl<M: MemorySource, MTR: MemoryAccessTracer> MMUImplementation<M, MTR> for Sim
         access_type: AccessType,
         memory_source: &mut M, 
         tracer: &mut MTR,
-        proc_cycle: u32,
+        proc_cycle: u64,
         trap: &mut TrapReason,
     ) -> u64 {
         let should_translate = mode.as_register_value() < Mode::Machine.as_register_value()

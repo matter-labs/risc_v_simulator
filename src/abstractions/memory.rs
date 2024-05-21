@@ -112,14 +112,14 @@ impl MemorySource for VectorMemoryImpl {
 
 
 pub trait MemoryAccessTracer {
-    fn add_query(&mut self, proc_cycle: u32, access_type: AccessType, phys_address: u64, value: u32);
-    fn sort_queries(&self, should_include_reg_queries: bool, height: u32) -> Vec<IndexedMemQuery>;
+    fn add_query(&mut self, proc_cycle: u64, access_type: AccessType, phys_address: u64, value: u32);
+    fn sort_queries(&self, should_include_reg_queries: bool, height: u64) -> Vec<IndexedMemQuery>;
 }
 
 impl MemoryAccessTracer for () {
     #[inline(always)]
-    fn add_query(&mut self, _proc_cycle: u32, _access_type: AccessType, _phys_address: u64, _value: u32) {}
-    fn sort_queries(&self, _should_include_reg_queries: bool, _height: u32) -> Vec<IndexedMemQuery> {
+    fn add_query(&mut self, _proc_cycle: u64, _access_type: AccessType, _phys_address: u64, _value: u32) {}
+    fn sort_queries(&self, _should_include_reg_queries: bool, _height: u64) -> Vec<IndexedMemQuery> {
         vec![]    
     }
 }
@@ -136,13 +136,13 @@ pub struct MemQuery {
 pub struct IndexedMemQuery {
     pub execute: bool,
     pub is_read_flag: bool,
-    pub timestamp: u32,
+    pub timestamp: u64,
     pub address: u64,
     pub value: u32
 }
 
 impl IndexedMemQuery {
-    pub fn default_for_timestamp(timestamp: u32) -> Self {
+    pub fn default_for_timestamp(timestamp: u64) -> Self {
         IndexedMemQuery {
             execute: false,
             is_read_flag: false, // by our conventon default operation is write (see air_compiler for details)
@@ -162,7 +162,7 @@ impl MemoryAccesesPerStep {
 }
 #[derive(Debug, Clone)]
 pub struct MemoryAccessTracerImpl {
-    pub memory_trace: HashMap<u32, MemoryAccesesPerStep>,
+    pub memory_trace: HashMap<u64, MemoryAccesesPerStep>,
 }
 
 impl MemoryAccessTracerImpl {
@@ -175,13 +175,13 @@ impl MemoryAccessTracerImpl {
 
 impl MemoryAccessTracer for MemoryAccessTracerImpl {
     #[inline(always)]
-    fn add_query(&mut self, proc_cycle: u32, access_type: AccessType, phys_address: u64, value: u32) {
+    fn add_query(&mut self, proc_cycle: u64, access_type: AccessType, phys_address: u64, value: u32) {
         let entry = self.memory_trace.entry(proc_cycle).or_insert(MemoryAccesesPerStep::new());
         let query = MemQuery { access_type, address: phys_address, value };
         entry.0[access_type as usize] = Some(query);
     }
 
-    fn sort_queries(&self, should_include_reg_queries: bool, height: u32) -> Vec<IndexedMemQuery> {
+    fn sort_queries(&self, should_include_reg_queries: bool, height: u64) -> Vec<IndexedMemQuery> {
         let mut res: Vec<IndexedMemQuery> = Vec::with_capacity(height as usize * self.memory_trace.len());
         
         for (&proc_cycle, query_arr) in self.memory_trace.iter() {
@@ -189,7 +189,7 @@ impl MemoryAccessTracer for MemoryAccessTracerImpl {
                 let timestamp = proc_cycle * height + sub_idx;
                 let query_option = query_arr.0.get(sub_idx as usize);
                 let indexed_query = query_option.map(|x| {
-                    let access_type = AccessType::from_idx(sub_idx);
+                    let access_type = AccessType::from_idx(sub_idx as u32);
                     if access_type.is_reg_access() && !should_include_reg_queries {
                         IndexedMemQuery::default_for_timestamp(timestamp)
                     } else {

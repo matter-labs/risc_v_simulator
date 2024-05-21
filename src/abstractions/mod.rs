@@ -11,7 +11,7 @@ pub mod non_determinism;
 #[inline(always)]
 pub fn mem_read<M: MemorySource, MTR: MemoryAccessTracer>(
     memory_source: &mut M, tracer: &mut MTR, phys_address: u64, num_bytes: u32,
-    access_type: AccessType, proc_cycle: u32, trap: &mut TrapReason
+    access_type: AccessType, proc_cycle: u64, trap: &mut TrapReason
 ) -> u32 {
     assert!(access_type == AccessType::Instruction || access_type == AccessType::MemLoad);
 
@@ -54,7 +54,7 @@ pub fn mem_read<M: MemorySource, MTR: MemoryAccessTracer>(
 pub fn mem_write<M: MemorySource, MTR: MemoryAccessTracer>(
     memory_source: &mut M, tracer: &mut MTR,
     phys_address: u64, value: u32, num_bytes: u32,
-    proc_cycle: u32, trap: &mut TrapReason
+    proc_cycle: u64, trap: &mut TrapReason
 ) {
     let unalignment = phys_address & 3;
     let aligned_address = phys_address & !3;
