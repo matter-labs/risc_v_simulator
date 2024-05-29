@@ -1,11 +1,11 @@
-use std::collections::VecDeque;
-use crate::mmu::NoMMU;
 use crate::abstractions::memory::MemoryAccessTracerImpl;
 use crate::abstractions::non_determinism::QuasiUARTSource;
 use crate::cycle::state::StateTracer;
+use crate::mmu::NoMMU;
 use crate::{
     abstractions::memory::VectorMemoryImpl, cycle::state::RiscV32State, mmio::MMIOImplementation,
 };
+use std::collections::VecDeque;
 
 pub const DEFAULT_ENTRY_POINT: u32 = 0x01000000;
 pub const CUSTOM_ENTRY_POINT: u32 = 0;
@@ -31,7 +31,7 @@ pub fn run_simple_simulator(os_image: Vec<u8>, cycles: usize) {
         buffer: Vec::new(),
     };
     let mut memory_tracer = MemoryAccessTracerImpl::new();
-    let mut mmu = NoMMU { sapt: 0};
+    let mut mmu = NoMMU { sapt: 0 };
 
     for cycle in 0..cycles {
         // state.pretty_dump();
@@ -40,7 +40,7 @@ pub fn run_simple_simulator(os_image: Vec<u8>, cycles: usize) {
             &mut memory_tracer,
             &mut mmu,
             &mut non_determinism_source,
-            cycle as u32
+            cycle as u32,
         );
     }
 }
@@ -80,7 +80,7 @@ pub fn run_simulator_with_traces(
             &mut memory_tracer,
             &mut mmu,
             &mut non_determinism_source,
-            i as u32
+            i as u32,
         );
         println!("mtvec: {:?}", state.machine_mode_trap_data.setup.tvec);
         state_tracer.insert(i + 1, state);

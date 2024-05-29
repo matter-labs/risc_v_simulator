@@ -4,8 +4,8 @@ use std::hint::unreachable_unchecked;
 use super::status_registers::*;
 use crate::abstractions::memory::{AccessType, MemoryAccessTracer, MemorySource};
 use crate::abstractions::non_determinism::NonDeterminismCSRSource;
-use crate::mmu::MMUImplementation;
 use crate::abstractions::{mem_read, mem_write};
+use crate::mmu::MMUImplementation;
 
 use crate::utils::*;
 
@@ -248,7 +248,10 @@ impl RiscV32State {
     #[must_use]
     #[inline(always)]
     pub fn get_first_register<MTR: MemoryAccessTracer>(
-        &self, reg_idx: u32, proc_cycle: u32, memory_tracer: &mut MTR
+        &self,
+        reg_idx: u32,
+        proc_cycle: u32,
+        memory_tracer: &mut MTR,
     ) -> u32 {
         let res = self.registers[reg_idx as usize];
         memory_tracer.add_query(proc_cycle, AccessType::RegReadFirst, reg_idx as u64, res);
@@ -258,7 +261,10 @@ impl RiscV32State {
     #[must_use]
     #[inline(always)]
     pub fn get_second_register<MTR: MemoryAccessTracer>(
-        &self, reg_idx: u32, proc_cycle: u32, memory_tracer: &mut MTR
+        &self,
+        reg_idx: u32,
+        proc_cycle: u32,
+        memory_tracer: &mut MTR,
     ) -> u32 {
         let res = self.registers[reg_idx as usize];
         memory_tracer.add_query(proc_cycle, AccessType::RegReadSecond, reg_idx as u64, res);
@@ -267,7 +273,11 @@ impl RiscV32State {
 
     #[inline(always)]
     pub fn set_register<MTR: MemoryAccessTracer>(
-        &mut self, reg_idx: u32, value: u32, proc_cycle: u32, memory_tracer: &mut MTR
+        &mut self,
+        reg_idx: u32,
+        value: u32,
+        proc_cycle: u32,
+        memory_tracer: &mut MTR,
     ) {
         if reg_idx != 0 {
             self.registers[reg_idx as usize] = value;
@@ -276,15 +286,18 @@ impl RiscV32State {
     }
 
     pub fn cycle<
-        'a, M: MemorySource, MTR: MemoryAccessTracer, ND: NonDeterminismCSRSource, 
-        MMU: MMUImplementation<M, MTR>
+        'a,
+        M: MemorySource,
+        MTR: MemoryAccessTracer,
+        ND: NonDeterminismCSRSource,
+        MMU: MMUImplementation<M, MTR>,
     >(
         &'a mut self,
-        memory_source: &'a mut M, 
+        memory_source: &'a mut M,
         memory_tracer: &'a mut MTR,
         mmu: &'a mut MMU,
         non_determinism_source: &mut ND,
-        proc_cycle: u32
+        proc_cycle: u32,
     ) {
         if self.extra_flags.get_wait_for_interrupt() != 0 {
             return;
@@ -332,7 +345,7 @@ impl RiscV32State {
                 );
                 break 'cycle_block;
             }
-            
+
             // decode the instruction and perform cycle
             // destination register
             let mut rd = get_rd(instr);
@@ -430,13 +443,13 @@ impl RiscV32State {
                 0b0000011 => {
                     // LOAD
 
-                    if rd == 0 {
-                        // Exception raised: loads with a destination of x0 must still raise 
-                        // any exceptions and action any other side effects 
-                        // even though the load value is discarded
-                        trap = TrapReason::IllegalInstruction;
-                        break 'cycle_block;
-                    }
+                    // if rd == 0 {
+                    //     // Exception raised: loads with a destination of x0 must still raise 
+                    //     // any exceptions and action any other side effects 
+                    //     // even though the load value is discarded
+                    //     trap = TrapReason::IllegalInstruction;
+                    //     break 'cycle_block;
+                    // }
 
                     let mut imm = ITypeOpcode::imm(instr);
                     sign_extend(&mut imm, 12);
@@ -450,7 +463,7 @@ impl RiscV32State {
                     // we formally access it once, but most likely full memory access
                     // will be abstracted away into external interface hiding memory translation too
                     let operand_phys_address = mmu.map_virtual_to_physical(
-                        virtual_address, current_privilege_mode, AccessType::MemLoad, memory_source, 
+                        virtual_address, current_privilege_mode, AccessType::MemLoad, memory_source,
                         memory_tracer, proc_cycle, &mut trap
                     );
                     if trap.is_a_trap() {
@@ -472,7 +485,7 @@ impl RiscV32State {
                             // that doesn't step over 4 byte boundary ever, meaning even though formal address is not 4 byte aligned,
                             // loads of u8/u16/u32 are still "aligned"
                             let operand = mem_read(
-                                memory_source, memory_tracer, operand_phys_address, 
+                                memory_source, memory_tracer, operand_phys_address,
                                 num_bytes, AccessType::MemLoad, proc_cycle, &mut trap
                             );
                             if trap.is_a_trap() {
@@ -515,7 +528,7 @@ impl RiscV32State {
                     // we formally access it once, but most likely full memory access
                     // will be abstracted away into external interface hiding memory translation too
                     let operand_phys_address = mmu.map_virtual_to_physical(
-                        virtual_address, current_privilege_mode, AccessType::MemStore, memory_source, memory_tracer, 
+                        virtual_address, current_privilege_mode, AccessType::MemStore, memory_source, memory_tracer,
                         proc_cycle, &mut trap
                     );
                     if trap.is_a_trap() {
@@ -530,7 +543,7 @@ impl RiscV32State {
                             let store_length = 1 << a;
                             // memory handles the write in full, whether it's aligned or not, or whatever
                             mem_write(
-                                memory_source, memory_tracer, operand_phys_address, rs2, store_length, 
+                                memory_source, memory_tracer, operand_phys_address, rs2, store_length,
                                 proc_cycle, &mut trap
                             );
                             if trap.is_a_trap() {
@@ -853,7 +866,10 @@ impl RiscV32State {
 
         // Handle traps and interrupts.
         if trap.is_a_trap() {
-            println!("trap: {:?}, pc: {:08x}, proc_cycle: {:?}, instr: {:08x}", trap, pc, proc_cycle, instr);
+            println!(
+                "trap: {:?}, pc: {:08x}, proc_cycle: {:?}, instr: {:08x}",
+                trap, pc, proc_cycle, instr
+            );
             let trap = trap.as_register_value();
             if trap & INTERRUPT_MASK != 0 {
                 // interrupt, not a trap. Always machine level in our system

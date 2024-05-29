@@ -21,7 +21,6 @@ pub struct QuasiUARTSource {
     pub buffer: Vec<u8>,
 }
 
-
 impl NonDeterminismCSRSource for QuasiUARTSource {
     fn read(&mut self) -> u32 {
         self.oracle.pop_front().unwrap_or(0u32)

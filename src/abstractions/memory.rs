@@ -1,7 +1,6 @@
 use crate::cycle::status_registers::TrapReason;
 use std::collections::HashMap;
 
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum AccessType {
@@ -19,7 +18,7 @@ impl AccessType {
     pub fn is_write_access(&self) -> bool {
         match self {
             AccessType::MemStore | AccessType::RegWrite | AccessType::None => true,
-            _ => false
+            _ => false,
         }
     }
 
@@ -30,7 +29,7 @@ impl AccessType {
     pub fn is_reg_access(&self) -> bool {
         match self {
             AccessType::RegReadFirst | AccessType::RegReadSecond | AccessType::RegWrite => true,
-            _ => false
+            _ => false,
         }
     }
 
@@ -42,13 +41,19 @@ impl AccessType {
             3 => AccessType::RegReadFirst,
             4 => AccessType::RegReadSecond,
             5 => AccessType::RegWrite,
-            _ => AccessType::None
+            _ => AccessType::None,
         }
     }
 }
 
 pub trait MemorySource {
-    fn set(&mut self, phys_address: u64, value: u32,access_type: AccessType, trap: &mut TrapReason);
+    fn set(
+        &mut self,
+        phys_address: u64,
+        value: u32,
+        access_type: AccessType,
+        trap: &mut TrapReason,
+    );
     fn get(&self, phys_address: u64, access_type: AccessType, trap: &mut TrapReason) -> u32;
 }
 
@@ -104,32 +109,47 @@ impl MemorySource for VectorMemoryImpl {
                 AccessType::Instruction => *trap = TrapReason::InstructionAccessFault,
                 AccessType::MemLoad => *trap = TrapReason::LoadAccessFault,
                 AccessType::MemStore => *trap = TrapReason::StoreOrAMOAccessFault,
-                _ => unreachable!()
+                _ => unreachable!(),
             }
         }
     }
 }
 
-
 pub trait MemoryAccessTracer {
-    fn add_query(&mut self, proc_cycle: u32, access_type: AccessType, phys_address: u64, value: u32);
+    fn add_query(
+        &mut self,
+        proc_cycle: u32,
+        access_type: AccessType,
+        phys_address: u64,
+        value: u32,
+    );
     fn sort_queries(&self, should_include_reg_queries: bool, height: u32) -> Vec<IndexedMemQuery>;
 }
 
 impl MemoryAccessTracer for () {
     #[inline(always)]
-    fn add_query(&mut self, _proc_cycle: u32, _access_type: AccessType, _phys_address: u64, _value: u32) {}
-    fn sort_queries(&self, _should_include_reg_queries: bool, _height: u32) -> Vec<IndexedMemQuery> {
-        vec![]    
+    fn add_query(
+        &mut self,
+        _proc_cycle: u32,
+        _access_type: AccessType,
+        _phys_address: u64,
+        _value: u32,
+    ) {
+    }
+    fn sort_queries(
+        &self,
+        _should_include_reg_queries: bool,
+        _height: u32,
+    ) -> Vec<IndexedMemQuery> {
+        vec![]
     }
 }
-
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MemQuery {
     pub access_type: AccessType,
     pub address: u64,
-    pub value: u32
+    pub value: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -138,7 +158,7 @@ pub struct IndexedMemQuery {
     pub is_read_flag: bool,
     pub timestamp: u32,
     pub address: u64,
-    pub value: u32
+    pub value: u32,
 }
 
 impl IndexedMemQuery {
@@ -148,7 +168,7 @@ impl IndexedMemQuery {
             is_read_flag: false, // by our conventon default operation is write (see air_compiler for details)
             timestamp,
             address: 0,
-            value: 0
+            value: 0,
         }
     }
 }
@@ -175,33 +195,49 @@ impl MemoryAccessTracerImpl {
 
 impl MemoryAccessTracer for MemoryAccessTracerImpl {
     #[inline(always)]
-    fn add_query(&mut self, proc_cycle: u32, access_type: AccessType, phys_address: u64, value: u32) {
-        let entry = self.memory_trace.entry(proc_cycle).or_insert(MemoryAccesesPerStep::new());
-        let query = MemQuery { access_type, address: phys_address, value };
+    fn add_query(
+        &mut self,
+        proc_cycle: u32,
+        access_type: AccessType,
+        phys_address: u64,
+        value: u32,
+    ) {
+        let entry = self
+            .memory_trace
+            .entry(proc_cycle)
+            .or_insert(MemoryAccesesPerStep::new());
+        let query = MemQuery {
+            access_type,
+            address: phys_address,
+            value,
+        };
         entry.0[access_type as usize] = Some(query);
     }
 
     fn sort_queries(&self, should_include_reg_queries: bool, height: u32) -> Vec<IndexedMemQuery> {
-        let mut res: Vec<IndexedMemQuery> = Vec::with_capacity(height as usize * self.memory_trace.len());
-        
+        let mut res: Vec<IndexedMemQuery> =
+            Vec::with_capacity(height as usize * self.memory_trace.len());
+
         for (&proc_cycle, query_arr) in self.memory_trace.iter() {
             for sub_idx in 0..height {
                 let timestamp = proc_cycle * height + sub_idx;
                 let query_option = query_arr.0.get(sub_idx as usize);
-                let indexed_query = query_option.map(|x| {
-                    let access_type = AccessType::from_idx(sub_idx);
-                    if access_type.is_reg_access() && !should_include_reg_queries {
-                        IndexedMemQuery::default_for_timestamp(timestamp)
-                    } else {
-                        IndexedMemQuery {
-                            execute: x.is_some(),
-                            is_read_flag: access_type.is_read_access(),
-                            timestamp,
-                            address: x.map(|x| x.address).unwrap_or(0),
-                            value: x.map(|x| x.value).unwrap_or(0)
+                let indexed_query = query_option
+                    .map(|x| {
+                        let access_type = AccessType::from_idx(sub_idx);
+                        if access_type.is_reg_access() && !should_include_reg_queries {
+                            IndexedMemQuery::default_for_timestamp(timestamp)
+                        } else {
+                            IndexedMemQuery {
+                                execute: x.is_some(),
+                                is_read_flag: access_type.is_read_access(),
+                                timestamp,
+                                address: x.map(|x| x.address).unwrap_or(0),
+                                value: x.map(|x| x.value).unwrap_or(0),
+                            }
                         }
-                    }
-                }).unwrap_or(IndexedMemQuery::default_for_timestamp(timestamp));
+                    })
+                    .unwrap_or(IndexedMemQuery::default_for_timestamp(timestamp));
                 res.push(indexed_query);
             }
         }

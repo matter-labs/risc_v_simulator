@@ -6,12 +6,16 @@ use std::hint::unreachable_unchecked;
 pub mod memory;
 pub mod non_determinism;
 
-
 #[must_use]
 #[inline(always)]
 pub fn mem_read<M: MemorySource, MTR: MemoryAccessTracer>(
-    memory_source: &mut M, tracer: &mut MTR, phys_address: u64, num_bytes: u32,
-    access_type: AccessType, proc_cycle: u32, trap: &mut TrapReason
+    memory_source: &mut M,
+    tracer: &mut MTR,
+    phys_address: u64,
+    num_bytes: u32,
+    access_type: AccessType,
+    proc_cycle: u32,
+    trap: &mut TrapReason,
 ) -> u32 {
     assert!(access_type == AccessType::Instruction || access_type == AccessType::MemLoad);
 
@@ -43,12 +47,15 @@ pub fn mem_read<M: MemorySource, MTR: MemoryAccessTracer>(
     value
 }
 
-
 #[inline(always)]
 pub fn mem_write<M: MemorySource, MTR: MemoryAccessTracer>(
-    memory_source: &mut M, tracer: &mut MTR,
-    phys_address: u64, value: u32, num_bytes: u32,
-    proc_cycle: u32, trap: &mut TrapReason
+    memory_source: &mut M,
+    tracer: &mut MTR,
+    phys_address: u64,
+    value: u32,
+    num_bytes: u32,
+    proc_cycle: u32,
+    trap: &mut TrapReason,
 ) {
     let unalignment = phys_address & 3;
     let aligned_address = phys_address & !3;
@@ -88,8 +95,7 @@ pub fn mem_write<M: MemorySource, MTR: MemoryAccessTracer>(
                 _ => unsafe { unreachable_unchecked() },
             };
 
-            let new_value =
-                ((value & value_mask) << (unalignment * 8)) | (old_value & mask_old);
+            let new_value = ((value & value_mask) << (unalignment * 8)) | (old_value & mask_old);
 
             memory_source.set(aligned_address, new_value, AccessType::MemStore, trap);
             if trap.is_a_trap() {
