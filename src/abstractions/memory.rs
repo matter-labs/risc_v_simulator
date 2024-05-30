@@ -1,24 +1,24 @@
 use crate::cycle::status_registers::TrapReason;
-use std::collections::HashMap;
+use std::{collections::BTreeMap, f32::consts::E};
 
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum AccessType {
     Instruction = 0,
-    MemLoad = 1,
-    MemStore = 2,
     RegReadFirst = 3,
     RegReadSecond = 4,
+    MemLoad = 1,
+    MemStore = 2,
     RegWrite = 5,
-    None = 6,
+    PadAccess = 6
 }
 pub const NUM_DIFFERENT_ACCESS_TYPES: usize = 6;
 
 impl AccessType {
     pub fn is_write_access(&self) -> bool {
         match self {
-            AccessType::MemStore | AccessType::RegWrite | AccessType::None => true,
+            AccessType::MemStore | AccessType::RegWrite => true,
             _ => false
         }
     }
@@ -37,12 +37,12 @@ impl AccessType {
     pub fn from_idx(idx: u32) -> Self {
         match idx {
             0 => AccessType::Instruction,
-            1 => AccessType::MemLoad,
-            2 => AccessType::MemStore,
-            3 => AccessType::RegReadFirst,
-            4 => AccessType::RegReadSecond,
+            1 => AccessType::RegReadFirst,
+            2 => AccessType::RegReadSecond,
+            3 => AccessType::MemLoad,
+            4 => AccessType::MemStore,
             5 => AccessType::RegWrite,
-            _ => AccessType::None
+            _ => AccessType::PadAccess
         }
     }
 }
@@ -111,17 +111,29 @@ impl MemorySource for VectorMemoryImpl {
 }
 
 
+pub struct MemoryAuxData {
+    pub unsorted_mem_queries: Vec<IndexedMemQuery>,
+    pub sorted_mem_queries: Vec<IndexedMemQuery>
+}
+
+impl MemoryAuxData {
+    pub fn stub() -> Self {
+        MemoryAuxData {
+            unsorted_mem_queries: vec![],
+            sorted_mem_queries: vec![]
+        }
+    }
+}
+
 pub trait MemoryAccessTracer {
     fn add_query(&mut self, proc_cycle: u32, access_type: AccessType, phys_address: u64, value: u32);
-    fn sort_queries(&self, should_include_reg_queries: bool, height: u32) -> Vec<IndexedMemQuery>;
+    fn sort_queries(&self, should_include_reg_queries: bool, height: u32) -> MemoryAuxData;
 }
 
 impl MemoryAccessTracer for () {
     #[inline(always)]
     fn add_query(&mut self, _proc_cycle: u32, _access_type: AccessType, _phys_address: u64, _value: u32) {}
-    fn sort_queries(&self, _should_include_reg_queries: bool, _height: u32) -> Vec<IndexedMemQuery> {
-        vec![]    
-    }
+    fn sort_queries(&self, _should_include_reg_queries: bool, _height: u32) -> MemoryAuxData { MemoryAuxData::stub() }
 }
 
 
@@ -135,17 +147,17 @@ pub struct MemQuery {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IndexedMemQuery {
     pub execute: bool,
-    pub is_read_flag: bool,
+    pub rw_flag: bool,
     pub timestamp: u32,
     pub address: u64,
     pub value: u32
 }
 
 impl IndexedMemQuery {
-    pub fn default_for_timestamp(timestamp: u32) -> Self {
+    pub fn stub(timestamp: u32, access_type: AccessType) -> Self {
         IndexedMemQuery {
             execute: false,
-            is_read_flag: false, // by our conventon default operation is write (see air_compiler for details)
+            rw_flag: access_type.is_write_access(),
             timestamp,
             address: 0,
             value: 0
@@ -162,16 +174,17 @@ impl MemoryAccesesPerStep {
 }
 
 pub struct MemoryAccessTracerImpl {
-    pub memory_trace: HashMap<u32, MemoryAccesesPerStep>,
+    pub memory_trace: BTreeMap<u32, MemoryAccesesPerStep>,
 }
 
 impl MemoryAccessTracerImpl {
     pub fn new() -> Self {
         Self {
-            memory_trace: HashMap::new(),
+            memory_trace: BTreeMap::new(),
         }
     }
 }
+
 
 impl MemoryAccessTracer for MemoryAccessTracerImpl {
     #[inline(always)]
@@ -181,32 +194,44 @@ impl MemoryAccessTracer for MemoryAccessTracerImpl {
         entry.0[access_type as usize] = Some(query);
     }
 
-    fn sort_queries(&self, should_include_reg_queries: bool, height: u32) -> Vec<IndexedMemQuery> {
-        let mut res: Vec<IndexedMemQuery> = Vec::with_capacity(height as usize * self.memory_trace.len());
+    fn sort_queries(&self, should_include_reg_queries: bool, height: u32) -> MemoryAuxData {
+        assert!(should_include_reg_queries);
+        let mut unsorted_mem_queries: Vec<IndexedMemQuery> = Vec::with_capacity(height as usize * self.memory_trace.len());
         
         for (&proc_cycle, query_arr) in self.memory_trace.iter() {
+            let mut instruction: u32 = 0;
             for sub_idx in 0..height {
+                let access_type = AccessType::from_idx(sub_idx);
                 let timestamp = proc_cycle * height + sub_idx;
-                let query_option = query_arr.0.get(sub_idx as usize);
-                let indexed_query = query_option.map(|x| {
-                    let access_type = AccessType::from_idx(sub_idx);
-                    if access_type.is_reg_access() && !should_include_reg_queries {
-                        IndexedMemQuery::default_for_timestamp(timestamp)
-                    } else {
-                        IndexedMemQuery {
-                            execute: x.is_some(),
-                            is_read_flag: access_type.is_read_access(),
-                            timestamp,
-                            address: x.map(|x| x.address).unwrap_or(0),
-                            value: x.map(|x| x.value).unwrap_or(0)
-                        }
+
+                if sub_idx as usize >= NUM_DIFFERENT_ACCESS_TYPES {
+                    let indexed_query = IndexedMemQuery::stub(timestamp, access_type);
+                    unsorted_mem_queries.push(indexed_query);
+                    continue;
+                }
+
+                let query_option = query_arr.0[sub_idx as usize];
+                let indexed_query = query_option.map(|actual_query| {
+                    if access_type == AccessType::Instruction {
+                        instruction = actual_query.value
                     }
-                }).unwrap_or(IndexedMemQuery::default_for_timestamp(timestamp));
-                res.push(indexed_query);
+    
+                    IndexedMemQuery {
+                        execute: true,
+                        rw_flag: access_type.is_write_access(),
+                        timestamp,
+                        address: actual_query.address,
+                        value: actual_query.value
+                    }
+                }).unwrap_or(
+                    IndexedMemQuery::stub(timestamp, access_type)
+                );
+                unsorted_mem_queries.push(indexed_query);
             }
         }
 
-        res.sort_by_key(|query| {
+        let mut sorted_mem_queries = unsorted_mem_queries.clone();
+        sorted_mem_queries.sort_by_key(|query| {
             // | execute | address | proc_cycle
             let mut key: u128 = query.execute as u128;
             key <<= 64;
@@ -215,6 +240,64 @@ impl MemoryAccessTracer for MemoryAccessTracerImpl {
             key += query.timestamp as u128;
             key
         });
-        res
+        
+        MemoryAuxData {
+            unsorted_mem_queries,
+            sorted_mem_queries
+        }
+    }
+}
+
+
+pub struct TestMemoryTracer {
+    memory_queries: Vec<IndexedMemQuery>
+}
+
+impl TestMemoryTracer {
+    pub fn new() -> Self {
+        TestMemoryTracer { memory_queries: vec![] }
+    }
+
+    pub fn add_raw_query(&mut self, raw_query: [u32; 8]) {
+        let [timestamp_low, timestamp_high, rw, execute, addr_low, addr_high, value_low, value_high] = raw_query;
+        let timestamp = (timestamp_high << 20) + timestamp_low;
+        let address = (addr_high << 16) + addr_low;
+        let value = (value_high << 16) + value_low;
+
+        let memory_query = IndexedMemQuery {
+            execute: execute != 0,
+            rw_flag: rw != 0,
+            timestamp,
+            address: address as u64,
+            value
+        };
+
+        self.memory_queries.push(memory_query);
+    }
+}
+
+impl MemoryAccessTracer for TestMemoryTracer {
+    #[inline(always)]
+    fn add_query(&mut self, _proc_cycle: u32, _access_type: AccessType, _phys_address: u64, _value: u32) {
+    }
+
+    fn sort_queries(&self, _should_include_reg_queries: bool, _height: u32) -> MemoryAuxData {
+        let unsorted_mem_queries: Vec<IndexedMemQuery> = self.memory_queries.clone();
+        let mut sorted_mem_queries = self.memory_queries.clone();
+      
+        sorted_mem_queries.sort_by_key(|query| {
+            // | execute | address | proc_cycle
+            let mut key: u128 = query.execute as u128;
+            key <<= 64;
+            key += query.address as u128;
+            key <<= 32;
+            key += query.timestamp as u128;
+            key
+        });
+        
+        MemoryAuxData {
+            unsorted_mem_queries,
+            sorted_mem_queries
+        }
     }
 }

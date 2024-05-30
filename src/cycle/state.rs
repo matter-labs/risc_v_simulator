@@ -251,7 +251,7 @@ impl RiscV32State {
         &self, reg_idx: u32, proc_cycle: u32, memory_tracer: &mut MTR
     ) -> u32 {
         let res = self.registers[reg_idx as usize];
-        memory_tracer.add_query(proc_cycle, AccessType::RegReadFirst, reg_idx as u64, res);
+        memory_tracer.add_query(proc_cycle, AccessType::RegReadFirst, ((reg_idx << 1) + 1) as u64, res);
         res
     }
 
@@ -261,7 +261,7 @@ impl RiscV32State {
         &self, reg_idx: u32, proc_cycle: u32, memory_tracer: &mut MTR
     ) -> u32 {
         let res = self.registers[reg_idx as usize];
-        memory_tracer.add_query(proc_cycle, AccessType::RegReadSecond, reg_idx as u64, res);
+        memory_tracer.add_query(proc_cycle, AccessType::RegReadSecond, ((reg_idx << 1) + 1) as u64, res);
         res
     }
 
@@ -271,7 +271,7 @@ impl RiscV32State {
     ) {
         if reg_idx != 0 {
             self.registers[reg_idx as usize] = value;
-            memory_tracer.add_query(proc_cycle, AccessType::RegWrite, reg_idx as u64, value);
+            memory_tracer.add_query(proc_cycle, AccessType::RegWrite, ((reg_idx << 1) + 1) as u64, value);
         }
     }
 
@@ -286,6 +286,7 @@ impl RiscV32State {
         non_determinism_source: &mut ND,
         proc_cycle: u32
     ) {
+        
         if self.extra_flags.get_wait_for_interrupt() != 0 {
             return;
         }
