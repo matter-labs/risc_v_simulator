@@ -249,6 +249,7 @@ where
             ProofForIndexIterator::ID,
             NeighboursIndexesIterator::ID,
             ExactIndexIterator::ID,
+            BlockLevelMetadataIterator::ID,
             UARTAccessMarker::ID,
         ];
 
@@ -404,6 +405,17 @@ where
                 let it = self
                     .oracle
                     .make_iterator::<ExactIndexIterator>(params)
+                    .expect("must make an iterator");
+                it
+            }
+            BlockLevelMetadataIterator::ID => {
+                let mut src_it = query.into_iter();
+                let params = <<BlockLevelMetadataIterator as OracleIteratorTypeMarker>::Params as UsizeDeserializable>::from_iter(&mut src_it).expect("must deserialize query params");
+                assert!(src_it.len() == 0);
+                // there is nothing to do here
+                let it = self
+                    .oracle
+                    .make_iterator::<BlockLevelMetadataIterator>(params)
                     .expect("must make an iterator");
                 it
             }
