@@ -235,6 +235,7 @@ impl<M: MemorySource, MTR: MemoryAccessTracer> MMUImplementation<M, MTR> for Sim
                     4,
                     access_type,
                     proc_cycle,
+                    proc_cycle,
                     trap,
                 );
                 if trap.is_a_trap() {

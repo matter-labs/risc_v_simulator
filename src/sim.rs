@@ -307,6 +307,7 @@ mod diag {
                     size_of::<u32>() as u32,
                     crate::abstractions::memory::AccessType::MemLoad,
                     cycle,
+                    cycle,
                     &mut trap,
                 );
 
@@ -316,6 +317,7 @@ mod diag {
                     fpp - 8,
                     size_of::<u32>() as u32,
                     crate::abstractions::memory::AccessType::MemLoad,
+                    cycle,
                     cycle,
                     &mut trap,
                 );
@@ -360,11 +362,12 @@ mod diag {
                     });
 
                     if i == 0
-                        && false == symbol_info.is_address_traceable(
-                            &self.dwarf_cache,
-                            state.pc as u64,
-                            &frame,
-                        )
+                        && false
+                            == symbol_info.is_address_traceable(
+                                &self.dwarf_cache,
+                                state.pc as u64,
+                                &frame,
+                            )
                     {
                         // We're in a service code.
                         self.stats.samples_service += 1;
@@ -516,15 +519,14 @@ mod diag {
 
             let mut tracked = false;
 
-            let r = 
-                cache
+            let r = cache
                 .unit_data
                 .get(&unit.header.offset())
                 .expect("Unit info should've been created on frame loading.")
                 .frames
                 .get(&frame.dw_die_offset.unwrap())
                 .expect("Frame info should've been created on frame loading.")
-                .to(|x| { 
+                .to(|x| {
                     if x.is_tracked {
                         println!("is_traceable:");
                         println!("address: 0x{:08x}", address);
@@ -532,7 +534,7 @@ mod diag {
                         println!("{:#?}", x);
                         tracked = true;
                     }
-                    address >= x.prologue_end && address < x.epilogue_begin 
+                    address >= x.prologue_end && address < x.epilogue_begin
                 });
 
             if tracked {
@@ -716,84 +718,110 @@ mod diag {
             let mut result = Vec::with_capacity(8);
 
             while let Ok(Some(frame)) = frames.next() {
-
                 let mut tracked = false;
 
-                if false && frame.function.as_ref().unwrap().demangle().unwrap().contains("talc::talc::Talc<O>::malloc") {
+                if false
+                    && frame
+                        .function
+                        .as_ref()
+                        .unwrap()
+                        .demangle()
+                        .unwrap()
+                        .contains("talc::talc::Talc<O>::malloc")
+                {
                     tracked = true;
                     // panic!("found!!!!!! {}", frame.function.as_ref().unwrap().demangle().unwrap());
                 }
 
-                unit_info.frames.entry(frame.dw_die_offset.unwrap()).or_insert_with(|| {
-                    let sequence = &unit_info.line_sequences;
-                    for s in sequence {
-                        if address >= s.start && address < s.end {
-                            let mut sm = unit_info.line_program_complete.resume_from(&s);
+                unit_info
+                    .frames
+                    .entry(frame.dw_die_offset.unwrap())
+                    .or_insert_with(|| {
+                        let sequence = &unit_info.line_sequences;
+                        for s in sequence {
+                            if address >= s.start && address < s.end {
+                                let mut sm = unit_info.line_program_complete.resume_from(&s);
 
-                            let mut prologue_end = None;
-                            let mut epilogue_begin = None;
-                            let mut no_return = false;
-                            let mut is_inlined = false;
+                                let mut prologue_end = None;
+                                let mut epilogue_begin = None;
+                                let mut no_return = false;
+                                let mut is_inlined = false;
 
-                            while let Ok(Some((_h, r))) = sm.next_row() {
-                                assert!(r.address() <= s.end);
+                                while let Ok(Some((_h, r))) = sm.next_row() {
+                                    assert!(r.address() <= s.end);
 
-                                if r.prologue_end() { prologue_end = Some(r.address()) }
-                                if r.epilogue_begin() { epilogue_begin = Some(r.address()) }
-                            }
+                                    if r.prologue_end() {
+                                        prologue_end = Some(r.address())
+                                    }
+                                    if r.epilogue_begin() {
+                                        epilogue_begin = Some(r.address())
+                                    }
+                                }
 
-                            let cursor =
-                            unit
-                                .entries_at_offset(frame.dw_die_offset.unwrap())
-                                .unwrap()
-                                .op(|x| { x.next_entry().expect("A unit must exist at the provided offset."); });
+                                let cursor = unit
+                                    .entries_at_offset(frame.dw_die_offset.unwrap())
+                                    .unwrap()
+                                    .op(|x| {
+                                        x.next_entry()
+                                            .expect("A unit must exist at the provided offset.");
+                                    });
 
-                            let die =
-                            cursor
-                                .current()
-                                .unwrap();
+                                let die = cursor.current().unwrap();
 
-                            match die.tag() {
-                                gimli::DW_TAG_inlined_subroutine => is_inlined = true,
-                                _ => ()
-                            }
-
-                            let mut attrs = die.attrs();
-
-                            while let Ok(Some(attr)) = attrs.next() {
-                                match attr.name() {
-                                    gimli::DW_AT_noreturn if epilogue_begin.is_some() =>
-                                        panic!("Non returning functions shouln't have an epilogue."),
-                                    gimli::DW_AT_noreturn =>
-                                        no_return = true,
+                                match die.tag() {
+                                    gimli::DW_TAG_inlined_subroutine => is_inlined = true,
                                     _ => (),
                                 }
+
+                                let mut attrs = die.attrs();
+
+                                while let Ok(Some(attr)) = attrs.next() {
+                                    match attr.name() {
+                                        gimli::DW_AT_noreturn if epilogue_begin.is_some() => {
+                                            panic!(
+                                            "Non returning functions shouln't have an epilogue."
+                                        )
+                                        }
+                                        gimli::DW_AT_noreturn => no_return = true,
+                                        _ => (),
+                                    }
+                                }
+
+                                let r = FrameInfo {
+                                    prologue_end: prologue_end.expect(
+                                        format!(
+                                            "A function must have a prologue. 0x{:08x}",
+                                            address
+                                        )
+                                        .as_str(),
+                                    ),
+                                    epilogue_begin: epilogue_begin.unwrap_or_else(|| u64::MAX),
+                                    no_return,
+                                    is_inlined,
+                                    is_tracked: tracked,
+                                    name: frame
+                                        .function
+                                        .as_ref()
+                                        .unwrap()
+                                        .demangle()
+                                        .unwrap()
+                                        .to_string(),
+                                };
+
+                                if tracked {
+                                    println!("{:#?}", r);
+                                }
+
+                                return r;
                             }
-
-                            let r = FrameInfo {
-                                prologue_end: prologue_end.expect(format!("A function must have a prologue. 0x{:08x}", address).as_str()),
-                                epilogue_begin: epilogue_begin.unwrap_or_else(|| {
-                                    u64::MAX
-                                }),
-                                no_return,
-                                is_inlined,
-                                is_tracked: tracked,
-                                name: frame.function.as_ref().unwrap().demangle().unwrap().to_string()
-                            };
-
-                            if tracked {
-                                println!("{:#?}", r);
-                            }
-
-                            return r;
                         }
-                    }
 
-                    panic!(
-                        "An line sequence was not found for frame {:?}, addr {}",
-                        frame.function.as_ref().unwrap().demangle(),
-                        address);
-                });
+                        panic!(
+                            "An line sequence was not found for frame {:?}, addr {}",
+                            frame.function.as_ref().unwrap().demangle(),
+                            address
+                        );
+                    });
 
                 // Safety: The borrow checker assumes that the frame lives for 'const (derived from
                 // `ctx` field in `Self`). The actual lifetime is the lifetime of `self`. So we're

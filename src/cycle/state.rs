@@ -244,16 +244,49 @@ impl RiscV32State {
         state
     }
 
+    #[inline(always)]
+    fn read_dummy_rs1_and_rs2<MTR: MemoryAccessTracer>(
+        &self,
+        proc_cycle: u32,
+        cycle_timestamp: u32,
+        memory_tracer: &mut MTR,
+    ) {
+        memory_tracer.add_query(
+            proc_cycle,
+            cycle_timestamp,
+            AccessType::RegReadFirst,
+            0,
+            0,
+            0,
+        );
+        memory_tracer.add_query(
+            proc_cycle,
+            cycle_timestamp,
+            AccessType::RegReadSecond,
+            0,
+            0,
+            0,
+        );
+    }
+
     #[must_use]
     #[inline(always)]
     pub fn get_first_register<MTR: MemoryAccessTracer>(
         &self,
         reg_idx: u32,
         proc_cycle: u32,
+        cycle_timestamp: u32,
         memory_tracer: &mut MTR,
     ) -> u32 {
         let res = self.registers[reg_idx as usize];
-        memory_tracer.add_query(proc_cycle, AccessType::RegReadFirst, reg_idx as u64, res);
+        memory_tracer.add_query(
+            proc_cycle,
+            cycle_timestamp,
+            AccessType::RegReadFirst,
+            reg_idx as u64,
+            res,
+            res,
+        );
         res
     }
 
@@ -263,10 +296,18 @@ impl RiscV32State {
         &self,
         reg_idx: u32,
         proc_cycle: u32,
+        cycle_timestamp: u32,
         memory_tracer: &mut MTR,
     ) -> u32 {
         let res = self.registers[reg_idx as usize];
-        memory_tracer.add_query(proc_cycle, AccessType::RegReadSecond, reg_idx as u64, res);
+        memory_tracer.add_query(
+            proc_cycle,
+            cycle_timestamp,
+            AccessType::RegReadSecond,
+            reg_idx as u64,
+            res,
+            res,
+        );
         res
     }
 
@@ -276,11 +317,31 @@ impl RiscV32State {
         reg_idx: u32,
         value: u32,
         proc_cycle: u32,
+        cycle_timestamp: u32,
         memory_tracer: &mut MTR,
     ) {
         if reg_idx != 0 {
+            let read_value = self.registers[reg_idx as usize];
             self.registers[reg_idx as usize] = value;
-            memory_tracer.add_query(proc_cycle, AccessType::RegWrite, reg_idx as u64, value);
+            memory_tracer.add_query(
+                proc_cycle,
+                cycle_timestamp,
+                AccessType::RegWrite,
+                reg_idx as u64,
+                read_value,
+                value,
+            );
+        } else {
+            if MTR::TRACE_X0_ACCESS {
+                memory_tracer.add_query(
+                    proc_cycle,
+                    cycle_timestamp,
+                    AccessType::RegWrite,
+                    reg_idx as u64,
+                    0,
+                    0,
+                );
+            }
         }
     }
 
@@ -297,6 +358,31 @@ impl RiscV32State {
         mmu: &'a mut MMU,
         non_determinism_source: &mut ND,
         proc_cycle: u32,
+    ) {
+        self.cycle_ext(
+            memory_source,
+            memory_tracer,
+            mmu,
+            non_determinism_source,
+            proc_cycle,
+            proc_cycle,
+        );
+    }
+
+    pub fn cycle_ext<
+        'a,
+        M: MemorySource,
+        MTR: MemoryAccessTracer,
+        ND: NonDeterminismCSRSource<M>,
+        MMU: MMUImplementation<M, MTR>,
+    >(
+        &'a mut self,
+        memory_source: &'a mut M,
+        memory_tracer: &'a mut MTR,
+        mmu: &'a mut MMU,
+        non_determinism_source: &mut ND,
+        proc_cycle: u32,
+        cycle_timestamp: u32,
     ) {
         if self.extra_flags.get_wait_for_interrupt() != 0 {
             return;
@@ -334,6 +420,7 @@ impl RiscV32State {
                 4,
                 AccessType::Instruction,
                 proc_cycle,
+                cycle_timestamp,
                 &mut trap,
             );
 
@@ -358,6 +445,7 @@ impl RiscV32State {
             match instr & LOWEST_7_BITS_MASK {
                 0b0110111 => {
                     // LUI
+                    self.read_dummy_rs1_and_rs2(proc_cycle, cycle_timestamp, memory_tracer);
                     let imm = UTypeOpcode::imm(instr);
 
                     ret_val = imm;
@@ -365,11 +453,14 @@ impl RiscV32State {
                 0b0010111 => {
                     // AUIPC
                     let imm = UTypeOpcode::imm(instr);
+                    self.read_dummy_rs1_and_rs2(proc_cycle, cycle_timestamp, memory_tracer);
 
                     ret_val = pc.wrapping_add(imm);
                 },
                 0b1101111 => {
                     // JAL
+                    self.read_dummy_rs1_and_rs2(proc_cycle, cycle_timestamp, memory_tracer);
+
                     let mut rel_addr: u32 = JTypeOpcode::imm(instr);
                     // quasi-sign-extend
                     sign_extend(&mut rel_addr, 21);
@@ -392,7 +483,8 @@ impl RiscV32State {
 
                     ret_val = pc.wrapping_add(4u32);
                     let rs1 = ITypeOpcode::rs1(instr);
-                    let reg_value = self.get_first_register(rs1, proc_cycle, memory_tracer);
+                    let reg_value = self.get_first_register(rs1, proc_cycle, cycle_timestamp, memory_tracer);
+                    let _ = self.get_second_register(0, proc_cycle, cycle_timestamp, memory_tracer);
                     //  The target address is obtained by adding the 12-bit signed I-immediate 
                     // to the register rs1, then setting the least-significant bit of the result to zero
                     let jmp_addr = (reg_value.wrapping_add(imm) & !0x1).wrapping_sub(4u32);
@@ -411,9 +503,9 @@ impl RiscV32State {
                     sign_extend(&mut imm, 13);
 
                     let rs1 = BTypeOpcode::rs1(instr);
-                    let rs1 = self.get_first_register(rs1, proc_cycle, memory_tracer);
+                    let rs1 = self.get_first_register(rs1, proc_cycle, cycle_timestamp, memory_tracer);
                     let rs2 = BTypeOpcode::rs2(instr);
-                    let rs2 = self.get_second_register(rs2, proc_cycle, memory_tracer);
+                    let rs2 = self.get_second_register(rs2, proc_cycle, cycle_timestamp, memory_tracer);
                     rd = 0;
                     let dst = pc.wrapping_add(imm).wrapping_sub(4u32);
                     let funct3 = BTypeOpcode::funct3(instr);
@@ -456,7 +548,7 @@ impl RiscV32State {
                     sign_extend(&mut imm, 12);
 
                     let rs1 = ITypeOpcode::rs1(instr);
-                    let rs1 = self.get_first_register(rs1, proc_cycle, memory_tracer);
+                    let rs1 = self.get_first_register(rs1, proc_cycle, cycle_timestamp, memory_tracer);
                     let virtual_address = rs1.wrapping_add(imm);
 
                     // println!("Load into x{:02} from 0x{:08x} at PC = 0x{:08x}", rd, virtual_address, pc);
@@ -487,7 +579,7 @@ impl RiscV32State {
                             // loads of u8/u16/u32 are still "aligned"
                             let operand = mem_read(
                                 memory_source, memory_tracer, operand_phys_address,
-                                num_bytes, AccessType::MemLoad, proc_cycle, &mut trap
+                                num_bytes, AccessType::MemLoad, proc_cycle, cycle_timestamp, &mut trap
                             );
                             if trap.is_a_trap() {
                                 debug_assert_eq!(trap, TrapReason::LoadAddressMisaligned);
@@ -515,9 +607,9 @@ impl RiscV32State {
                     sign_extend(&mut imm, 12);
 
                     let rs1 = STypeOpcode::rs1(instr);
-                    let rs1 = self.get_first_register(rs1, proc_cycle, memory_tracer);
+                    let rs1 = self.get_first_register(rs1, proc_cycle, cycle_timestamp, memory_tracer);
                     let rs2 = STypeOpcode::rs2(instr);
-                    let rs2 = self.get_second_register(rs2, proc_cycle, memory_tracer);
+                    let rs2 = self.get_second_register(rs2, proc_cycle, cycle_timestamp, memory_tracer);
                     let virtual_address = imm.wrapping_add(rs1);
                     // it's S-type, that has no RD, so set it to x0
                     rd = 0;
@@ -545,7 +637,7 @@ impl RiscV32State {
                             // memory handles the write in full, whether it's aligned or not, or whatever
                             mem_write(
                                 memory_source, memory_tracer, operand_phys_address, rs2, store_length,
-                                proc_cycle, &mut trap
+                                proc_cycle, cycle_timestamp, &mut trap
                             );
                             if trap.is_a_trap() {
                                 // error during address translation
@@ -565,11 +657,12 @@ impl RiscV32State {
                     const TEST_REG_REG_MASK: u32 = 0x20;
                     let is_r_type = instr & TEST_REG_REG_MASK != 0;
                     let rs1 = RTypeOpcode::rs1(instr); // same as IType
-                    let operand_1 = self.get_first_register(rs1, proc_cycle, memory_tracer);
+                    let operand_1 = self.get_first_register(rs1, proc_cycle, cycle_timestamp, memory_tracer);
                     let operand_2 = if is_r_type {
                         let rs2 = BTypeOpcode::rs2(instr);
-                        self.get_second_register(rs2, proc_cycle, memory_tracer)
+                        self.get_second_register(rs2, proc_cycle, cycle_timestamp, memory_tracer)
                     } else {
+                        let _ = self.get_second_register(0, proc_cycle, cycle_timestamp, memory_tracer);
                         let mut imm = ITypeOpcode::imm(instr);
                         sign_extend(&mut imm, 12);
 
@@ -629,10 +722,26 @@ impl RiscV32State {
                                 unreachable_unchecked()
                             },
                         };
+                    } else if is_r_type && funct7 == 0b0000101 {
+                        // max/min
+                        ret_val = match funct3 {
+                            5 => {
+                                // MINU
+                                if operand_1 < operand_2 {
+                                    operand_1
+                                } else {
+                                    operand_2
+                                }
+                            },
+                            _ => unsafe {
+                                unreachable_unchecked()
+                            },
+                        };
                     } else {
                         // basic set
                         const ARITHMETIC_SHIFT_RIGHT_TEST_MASK: u32 = 0x40000000;
                         const SUB_TEST_MASK: u32 = 0x40000000;
+                        const ROTATE_MASK: u32 = 0b0110_0000_0000_0000_0000_0000_0000_0000u32;
                         ret_val = match funct3 {
                             0 => {
                                 if is_r_type && instr & SUB_TEST_MASK != 0 {
@@ -642,9 +751,13 @@ impl RiscV32State {
                                 }
                             },
                             1 => {
-                                // Shift left
-                                // shift is encoded in lowest 5 bits
-                                operand_1 << (operand_2 & 0x1f)
+                                if instr & ROTATE_MASK != 0 {
+                                    operand_1.rotate_left(operand_2 & 0x1f)
+                                } else {
+                                    // Shift left
+                                    // shift is encoded in lowest 5 bits
+                                    operand_1 << (operand_2 & 0x1f)
+                                }
                             },
                             2 => {
                                 // Signed LT
@@ -659,12 +772,16 @@ impl RiscV32State {
                                 operand_1 ^ operand_2
                             },
                             5 => {
-                                // Arithmetic shift right
-                                // shift is encoded in lowest 5 bits
-                                if instr & ARITHMETIC_SHIFT_RIGHT_TEST_MASK != 0 {
-                                    ((operand_1 as i32) >> (operand_2 & 0x1f)) as u32
+                                if instr & ROTATE_MASK != 0 {
+                                    operand_1.rotate_right(operand_2 & 0x1f)
                                 } else {
-                                    operand_1  >> (operand_2 & 0x1f)
+                                    // Arithmetic shift right
+                                    // shift is encoded in lowest 5 bits
+                                    if instr & ARITHMETIC_SHIFT_RIGHT_TEST_MASK != 0 {
+                                        ((operand_1 as i32) >> (operand_2 & 0x1f)) as u32
+                                    } else {
+                                        operand_1  >> (operand_2 & 0x1f)
+                                    }
                                 }
                             },
                             6 => {
@@ -683,9 +800,11 @@ impl RiscV32State {
                         let valid_encoding = if !is_r_type {
                             // the only invalid encodings are in case of SLLI, SRLI, SRAI which require
                             // predetermined funct7
+
+                            // Also allow ROL/ROR/RORI
                             match funct3 {
-                                1 => funct7 == 0,
-                                5 => funct7 == 0 || funct7 == 0b0100000,
+                                1 => funct7 == 0 || funct7 == 0b0110000,
+                                5 => funct7 == 0 || funct7 == 0b0100000 || funct7 == 0b0110000,
                                 _ => true
                             }
                         } else {
@@ -701,10 +820,10 @@ impl RiscV32State {
                         };
                     }
                 },
-                0b0001111 => {
-                    // nothing to do in fence, our memory is linear
-                    rd = 0;
-                },
+                // 0b0001111 => {
+                //     // nothing to do in fence, our memory is linear
+                //     rd = 0;
+                // },
                 0b1110011 => {
                     // various control instructions, we implement only a subset
                     const ZICSR_MASK: u32 = 0x3;
@@ -721,7 +840,9 @@ impl RiscV32State {
                     // so now we can just use full integer values for csr numbers
                     if funct3 & ZICSR_MASK != 0 {
                         let rs1_as_imm = ITypeOpcode::rs1(instr);
-                        let rs1 = self.get_first_register(rs1_as_imm, proc_cycle, memory_tracer);
+
+                        let rs1 = self.get_first_register(rs1_as_imm, proc_cycle, cycle_timestamp, memory_tracer);
+                        let _ = self.get_second_register(0, proc_cycle, cycle_timestamp, memory_tracer);
 
                         let mut write_val = rs1;
 
@@ -821,6 +942,7 @@ impl RiscV32State {
                     } else if funct3 == 0b000 {
                         // SYSTEM
                         rd = 0;
+                        self.read_dummy_rs1_and_rs2(proc_cycle, cycle_timestamp, memory_tracer);
                         // mainly we support WFI, MRET, ECALL and EBREAK
                         if csr_number == 0x105 {
                             println!("WFI: proc_cycle: {:?}", proc_cycle);
@@ -886,7 +1008,7 @@ impl RiscV32State {
             // If there was a trap, do NOT allow register writeback.
             debug_assert_eq!(trap, TrapReason::NoTrap);
             // println!("Set x{:02} = 0x{:08x}", rd, ret_val);
-            self.set_register(rd, ret_val, proc_cycle, memory_tracer);
+            self.set_register(rd, ret_val, proc_cycle, cycle_timestamp, memory_tracer);
 
             // traps below will update PC themself, so it only happens if we have NO trap
             pc = pc.wrapping_add(4u32);

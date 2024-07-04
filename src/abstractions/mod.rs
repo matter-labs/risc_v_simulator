@@ -16,6 +16,7 @@ pub fn mem_read<M: MemorySource, MTR: MemoryAccessTracer>(
     num_bytes: u32,
     access_type: AccessType,
     proc_cycle: u32,
+    cycle_timestamp: u32,
     trap: &mut TrapReason,
 ) -> u32 {
     assert!(access_type == AccessType::Instruction || access_type == AccessType::MemLoad);
@@ -25,7 +26,19 @@ pub fn mem_read<M: MemorySource, MTR: MemoryAccessTracer>(
     let value = match (unalignment, num_bytes) {
         (0, 4) | (0, 2) | (2, 2) | (0, 1) | (1, 1) | (2, 1) | (3, 1) => {
             let value = memory_source.get(aligned_address, access_type, trap);
-            tracer.add_query(proc_cycle, access_type, aligned_address, value);
+            if MTR::TRACE_INSTRUCTION_READS == false && access_type == AccessType::Instruction {
+                // we skip such access
+            } else {
+                tracer.add_query(
+                    proc_cycle,
+                    cycle_timestamp,
+                    access_type,
+                    aligned_address,
+                    value,
+                    value,
+                );
+            }
+
             let unalignment_bits = unalignment * 8;
             let value = value >> unalignment_bits;
             value
@@ -56,6 +69,7 @@ pub fn mem_write<M: MemorySource, MTR: MemoryAccessTracer>(
     value: u32,
     num_bytes: u32,
     proc_cycle: u32,
+    cycle_timestamp: u32,
     trap: &mut TrapReason,
 ) {
     let unalignment = phys_address & 3;
@@ -75,7 +89,16 @@ pub fn mem_write<M: MemorySource, MTR: MemoryAccessTracer>(
             if trap.is_a_trap() {
                 return;
             }
-            tracer.add_query(proc_cycle, AccessType::MemLoad, aligned_address, old_value);
+            if MTR::MERGE_READ_WRITE == false {
+                tracer.add_query(
+                    proc_cycle,
+                    cycle_timestamp,
+                    AccessType::MemLoad,
+                    aligned_address,
+                    old_value,
+                    old_value,
+                );
+            }
 
             let value_mask = match num_bytes {
                 1 => 0x000000ffu32,
@@ -102,7 +125,14 @@ pub fn mem_write<M: MemorySource, MTR: MemoryAccessTracer>(
             if trap.is_a_trap() {
                 return;
             }
-            tracer.add_query(proc_cycle, AccessType::MemStore, aligned_address, new_value);
+            tracer.add_query(
+                proc_cycle,
+                cycle_timestamp,
+                AccessType::MemStore,
+                aligned_address,
+                old_value,
+                new_value,
+            );
         }
 
         _ => {

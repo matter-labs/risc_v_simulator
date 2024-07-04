@@ -128,12 +128,18 @@ impl MemorySource for VectorMemoryImpl {
 }
 
 pub trait MemoryAccessTracer {
+    const MERGE_READ_WRITE: bool = false;
+    const TRACE_INSTRUCTION_READS: bool = true;
+    const TRACE_X0_ACCESS: bool = false;
+
     fn add_query(
         &mut self,
         proc_cycle: u32,
+        cycle_timestamp: u32,
         access_type: AccessType,
         phys_address: u64,
-        value: u32,
+        read_value: u32,
+        write_value: u32,
     );
     fn sort_queries(&self, should_include_reg_queries: bool, height: u32) -> Vec<IndexedMemQuery>;
 }
@@ -143,9 +149,11 @@ impl MemoryAccessTracer for () {
     fn add_query(
         &mut self,
         _proc_cycle: u32,
+        _cycle_timestamp: u32,
         _access_type: AccessType,
         _phys_address: u64,
-        _value: u32,
+        _read_value: u32,
+        _write_value: u32,
     ) {
     }
     fn sort_queries(
@@ -210,9 +218,11 @@ impl MemoryAccessTracer for MemoryAccessTracerImpl {
     fn add_query(
         &mut self,
         proc_cycle: u32,
+        cycle_timestamp: u32,
         access_type: AccessType,
         phys_address: u64,
-        value: u32,
+        read_value: u32,
+        write_value: u32,
     ) {
         let entry = self
             .memory_trace
@@ -221,7 +231,7 @@ impl MemoryAccessTracer for MemoryAccessTracerImpl {
         let query = MemQuery {
             access_type,
             address: phys_address,
-            value,
+            value: write_value,
         };
         entry.0[access_type as usize] = Some(query);
     }

@@ -443,10 +443,12 @@ where
 // now we hook an access
 impl<M: MemorySource> NonDeterminismCSRSource<M> for ZkEENonDeterminismSource<M> {
     fn read(&mut self) -> u32 {
+        return 0;
         self.read_impl()
     }
 
     fn write_with_memory_access(&mut self, memory: &M, value: u32) {
+        return;
         self.write_impl(memory, value)
     }
 }
