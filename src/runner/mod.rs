@@ -65,7 +65,7 @@ pub fn run_simulator_with_traces(config: SimulatorConfig) -> (StateTracer, Memor
         non_determinism_source,
     );
 
-    let mut state_tracer = StateTracer::new();
+    let mut state_tracer = StateTracer::new_for_num_cycles(1024);
     state_tracer.insert(0, sim.state);
 
     sim.run(

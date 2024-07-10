@@ -94,3 +94,15 @@ pub const fn zero_extend_16(src: u32) -> u32 {
 pub const fn zero_extend_8(src: u32) -> u32 {
     src & 0x000000ff
 }
+
+#[must_use]
+#[inline(always)]
+pub const fn get_formal_rs1(src: u32) -> u32 {
+    get_bits_and_align_right(src, 15, 5)
+}
+
+#[must_use]
+#[inline(always)]
+pub const fn get_formal_rs2(src: u32) -> u32 {
+    get_bits_and_align_right(src, 20, 5)
+}

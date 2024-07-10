@@ -117,22 +117,23 @@ impl ExtraFlags {
 
 #[derive(Clone, Debug)]
 pub struct StateTracer {
-    pub tracer: HashMap<usize, RiscV32State>,
+    tracer: Vec<RiscV32State>,
 }
 
 impl StateTracer {
-    pub fn new() -> Self {
+    pub fn new_for_num_cycles(num_cycles: usize) -> Self {
         Self {
-            tracer: HashMap::new(),
+            tracer: Vec::with_capacity(num_cycles + 1),
         }
     }
 
     pub fn insert(&mut self, idx: usize, state: RiscV32State) {
-        self.tracer.insert(idx, state);
+        assert_eq!(self.tracer.len(), idx, "trying to insert out of order");
+        self.tracer.push(state);
     }
 
     pub fn get(&self, idx: usize) -> Option<&RiscV32State> {
-        self.tracer.get(&idx)
+        self.tracer.get(idx)
     }
 }
 
@@ -242,31 +243,6 @@ impl RiscV32State {
         };
 
         state
-    }
-
-    #[inline(always)]
-    fn read_dummy_rs1_and_rs2<MTR: MemoryAccessTracer>(
-        &self,
-        proc_cycle: u32,
-        cycle_timestamp: u32,
-        memory_tracer: &mut MTR,
-    ) {
-        memory_tracer.add_query(
-            proc_cycle,
-            cycle_timestamp,
-            AccessType::RegReadFirst,
-            0,
-            0,
-            0,
-        );
-        memory_tracer.add_query(
-            proc_cycle,
-            cycle_timestamp,
-            AccessType::RegReadSecond,
-            0,
-            0,
-            0,
-        );
     }
 
     #[must_use]
@@ -436,6 +412,14 @@ impl RiscV32State {
             // decode the instruction and perform cycle
             // destination register
             let mut rd = get_rd(instr);
+            // we will ALWAYS read formal rs1 and rs2
+            let formal_rs1 = get_formal_rs1(instr);
+            let formal_rs2 = get_formal_rs1(instr);
+
+            let rs1 =
+                self.get_first_register(formal_rs1, proc_cycle, cycle_timestamp, memory_tracer);
+            let rs2 =
+                self.get_second_register(formal_rs2, proc_cycle, cycle_timestamp, memory_tracer);
 
             // note on all the PC operations below: if we modify PC in the opcode,
             // we subtract 4 from it, to later on add 4 once at the end of the loop. For MOST
@@ -445,7 +429,6 @@ impl RiscV32State {
             match instr & LOWEST_7_BITS_MASK {
                 0b0110111 => {
                     // LUI
-                    self.read_dummy_rs1_and_rs2(proc_cycle, cycle_timestamp, memory_tracer);
                     let imm = UTypeOpcode::imm(instr);
 
                     ret_val = imm;
@@ -453,14 +436,11 @@ impl RiscV32State {
                 0b0010111 => {
                     // AUIPC
                     let imm = UTypeOpcode::imm(instr);
-                    self.read_dummy_rs1_and_rs2(proc_cycle, cycle_timestamp, memory_tracer);
 
                     ret_val = pc.wrapping_add(imm);
                 },
                 0b1101111 => {
                     // JAL
-                    self.read_dummy_rs1_and_rs2(proc_cycle, cycle_timestamp, memory_tracer);
-
                     let mut rel_addr: u32 = JTypeOpcode::imm(instr);
                     // quasi-sign-extend
                     sign_extend(&mut rel_addr, 21);
@@ -482,12 +462,9 @@ impl RiscV32State {
                     sign_extend(&mut imm, 12);
 
                     ret_val = pc.wrapping_add(4u32);
-                    let rs1 = ITypeOpcode::rs1(instr);
-                    let reg_value = self.get_first_register(rs1, proc_cycle, cycle_timestamp, memory_tracer);
-                    let _ = self.get_second_register(0, proc_cycle, cycle_timestamp, memory_tracer);
                     //  The target address is obtained by adding the 12-bit signed I-immediate 
                     // to the register rs1, then setting the least-significant bit of the result to zero
-                    let jmp_addr = (reg_value.wrapping_add(imm) & !0x1).wrapping_sub(4u32);
+                    let jmp_addr = (rs1.wrapping_add(imm) & !0x1).wrapping_sub(4u32);
 
                     if jmp_addr & 0x3 != 0 {
                         // unaligned PC
@@ -502,10 +479,6 @@ impl RiscV32State {
                     let mut imm = BTypeOpcode::imm(instr);
                     sign_extend(&mut imm, 13);
 
-                    let rs1 = BTypeOpcode::rs1(instr);
-                    let rs1 = self.get_first_register(rs1, proc_cycle, cycle_timestamp, memory_tracer);
-                    let rs2 = BTypeOpcode::rs2(instr);
-                    let rs2 = self.get_second_register(rs2, proc_cycle, cycle_timestamp, memory_tracer);
                     rd = 0;
                     let dst = pc.wrapping_add(imm).wrapping_sub(4u32);
                     let funct3 = BTypeOpcode::funct3(instr);
@@ -547,8 +520,6 @@ impl RiscV32State {
                     let mut imm = ITypeOpcode::imm(instr);
                     sign_extend(&mut imm, 12);
 
-                    let rs1 = ITypeOpcode::rs1(instr);
-                    let rs1 = self.get_first_register(rs1, proc_cycle, cycle_timestamp, memory_tracer);
                     let virtual_address = rs1.wrapping_add(imm);
 
                     // println!("Load into x{:02} from 0x{:08x} at PC = 0x{:08x}", rd, virtual_address, pc);
@@ -606,10 +577,6 @@ impl RiscV32State {
                     let mut imm = STypeOpcode::imm(instr);
                     sign_extend(&mut imm, 12);
 
-                    let rs1 = STypeOpcode::rs1(instr);
-                    let rs1 = self.get_first_register(rs1, proc_cycle, cycle_timestamp, memory_tracer);
-                    let rs2 = STypeOpcode::rs2(instr);
-                    let rs2 = self.get_second_register(rs2, proc_cycle, cycle_timestamp, memory_tracer);
                     let virtual_address = imm.wrapping_add(rs1);
                     // it's S-type, that has no RD, so set it to x0
                     rd = 0;
@@ -656,13 +623,10 @@ impl RiscV32State {
                 => {
                     const TEST_REG_REG_MASK: u32 = 0x20;
                     let is_r_type = instr & TEST_REG_REG_MASK != 0;
-                    let rs1 = RTypeOpcode::rs1(instr); // same as IType
                     let operand_1 = self.get_first_register(rs1, proc_cycle, cycle_timestamp, memory_tracer);
                     let operand_2 = if is_r_type {
-                        let rs2 = BTypeOpcode::rs2(instr);
-                        self.get_second_register(rs2, proc_cycle, cycle_timestamp, memory_tracer)
+                        rs2
                     } else {
-                        let _ = self.get_second_register(0, proc_cycle, cycle_timestamp, memory_tracer);
                         let mut imm = ITypeOpcode::imm(instr);
                         sign_extend(&mut imm, 12);
 
@@ -841,11 +805,6 @@ impl RiscV32State {
                     if funct3 & ZICSR_MASK != 0 {
                         let rs1_as_imm = ITypeOpcode::rs1(instr);
 
-                        let rs1 = self.get_first_register(rs1_as_imm, proc_cycle, cycle_timestamp, memory_tracer);
-                        let _ = self.get_second_register(0, proc_cycle, cycle_timestamp, memory_tracer);
-
-                        let mut write_val = rs1;
-
                         // read
                         match csr_number {
                             0x180 => {
@@ -889,6 +848,8 @@ impl RiscV32State {
                                 break 'cycle_block;
                             }
                         }
+
+                        let mut write_val = 0;
 
                         // update
                         match funct3 {
@@ -942,7 +903,6 @@ impl RiscV32State {
                     } else if funct3 == 0b000 {
                         // SYSTEM
                         rd = 0;
-                        self.read_dummy_rs1_and_rs2(proc_cycle, cycle_timestamp, memory_tracer);
                         // mainly we support WFI, MRET, ECALL and EBREAK
                         if csr_number == 0x105 {
                             println!("WFI: proc_cycle: {:?}", proc_cycle);
