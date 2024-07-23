@@ -5,7 +5,6 @@ use std::hint::unreachable_unchecked;
 
 pub mod memory;
 pub mod non_determinism;
-pub mod oracle;
 
 #[must_use]
 #[inline(always)]
