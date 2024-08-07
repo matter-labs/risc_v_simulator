@@ -813,6 +813,7 @@ impl RiscV32State {
                                 } else {
                                     non_determinism_source.read()
                                 };
+                                tracer.trace_non_determinism_read(ret_val, proc_cycle, cycle_timestamp);
                             }
                             _ => {
                                 trap = TrapReason::IllegalInstruction;
