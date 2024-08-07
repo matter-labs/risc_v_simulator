@@ -1,6 +1,5 @@
 use std::path::Path;
 
-use crate::abstractions::memory::MemoryAccessTracerImpl;
 use crate::abstractions::non_determinism::NonDeterminismCSRSource;
 use crate::abstractions::non_determinism::QuasiUARTSource;
 use crate::cycle::state::StateTracer;
@@ -27,7 +26,7 @@ pub fn run_simple_with_entry_point_and_non_determimism_source<
     non_determinism_source: S,
 ) -> S {
     let state = RiscV32State::initial(config.entry_point);
-    let memory_tracer = MemoryAccessTracerImpl::new();
+    let memory_tracer = ();
     let mmu = NoMMU { sapt: 0 };
 
     let mut memory = VectorMemoryImpl::new_for_byte_size(1 << 32); // use full RAM
@@ -47,9 +46,9 @@ pub fn run_simple_with_entry_point_and_non_determimism_source<
     sim.non_determinism_source
 }
 
-pub fn run_simulator_with_traces(config: SimulatorConfig) -> (StateTracer, MemoryAccessTracerImpl) {
+pub fn run_simulator_with_traces(config: SimulatorConfig) -> (StateTracer, ()) {
     let state = RiscV32State::initial(CUSTOM_ENTRY_POINT);
-    let memory_tracer = MemoryAccessTracerImpl::new();
+    let memory_tracer = ();
     let mmu = NoMMU { sapt: state.sapt };
     let non_determinism_source = QuasiUARTSource::default();
 

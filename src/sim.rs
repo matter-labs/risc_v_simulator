@@ -2,8 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::{
     abstractions::{
-        memory::{MemoryAccessTracer, MemorySource},
-        non_determinism::NonDeterminismCSRSource,
+        memory::MemorySource, non_determinism::NonDeterminismCSRSource, tracer::Tracer,
     },
     cycle::state::RiscV32State,
     mmu::MMUImplementation,
@@ -12,15 +11,15 @@ use crate::{
 
 use self::diag::Profiler;
 
-pub(crate) struct Simulator<MS, MT, MMU, ND>
+pub(crate) struct Simulator<MS, TR, MMU, ND>
 where
     MS: MemorySource,
-    MT: MemoryAccessTracer,
-    MMU: MMUImplementation<MS, MT>,
+    TR: Tracer,
+    MMU: MMUImplementation<MS, TR>,
     ND: NonDeterminismCSRSource<MS>,
 {
     pub(crate) memory_source: MS,
-    pub(crate) memory_tracer: MT,
+    pub(crate) memory_tracer: TR,
     pub(crate) mmu: MMU,
     pub(crate) non_determinism_source: ND,
 
@@ -30,18 +29,18 @@ where
     profiler: Option<Profiler>,
 }
 
-impl<MS, MT, MMU, ND> Simulator<MS, MT, MMU, ND>
+impl<MS, TR, MMU, ND> Simulator<MS, TR, MMU, ND>
 where
     MS: MemorySource,
-    MT: MemoryAccessTracer,
-    MMU: MMUImplementation<MS, MT>,
+    TR: Tracer,
+    MMU: MMUImplementation<MS, TR>,
     ND: NonDeterminismCSRSource<MS>,
 {
     pub(crate) fn new(
         config: SimulatorConfig,
         state: RiscV32State,
         memory_source: MS,
-        memory_tracer: MT,
+        memory_tracer: TR,
         mmu: MMU,
         non_determinism_source: ND,
     ) -> Self {
@@ -182,10 +181,7 @@ mod diag {
     use object::{File, Object, ObjectSection};
 
     use crate::{
-        abstractions::{
-            mem_read,
-            memory::{MemoryAccessTracer, MemorySource},
-        },
+        abstractions::{mem_read, memory::MemorySource, tracer::Tracer},
         cycle::{state::RiscV32State, status_registers::TrapReason},
         mmu::MMUImplementation,
         qol::PipeOp as _,
@@ -237,34 +233,34 @@ mod diag {
             }
         }
 
-        pub(crate) fn pre_cycle<MS, MT, MMU>(
+        pub(crate) fn pre_cycle<MS, TR, MMU>(
             &mut self,
             state: &RiscV32State,
             memory_source: &mut MS,
-            memory_tracer: &mut MT,
+            memory_tracer: &mut TR,
             mmu: &mut MMU,
             cycle: u32,
         ) where
             MS: MemorySource,
-            MT: MemoryAccessTracer,
-            MMU: MMUImplementation<MS, MT>,
+            TR: Tracer,
+            MMU: MMUImplementation<MS, TR>,
         {
             if cycle % self.frequency_recip == 0 {
                 self.collect_stacktrace(state, memory_source, memory_tracer, mmu, cycle);
             }
         }
 
-        fn collect_stacktrace<MS, MT, MMU>(
+        fn collect_stacktrace<MS, TR, MMU>(
             &mut self,
             state: &RiscV32State,
             memory_source: &mut MS,
-            memory_tracer: &mut MT,
+            memory_tracer: &mut TR,
             mmu: &mut MMU,
             cycle: u32,
         ) where
             MS: MemorySource,
-            MT: MemoryAccessTracer,
-            MMU: MMUImplementation<MS, MT>,
+            TR: Tracer,
+            MMU: MMUImplementation<MS, TR>,
         {
             self.stats.samples_total += 1;
 

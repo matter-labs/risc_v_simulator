@@ -1,10 +1,11 @@
 use crate::abstractions::mem_read;
-use crate::abstractions::memory::{AccessType, MemoryAccessTracer, MemorySource};
+use crate::abstractions::memory::{AccessType, MemorySource};
+use crate::abstractions::tracer::Tracer;
 use crate::cycle::state::Mode;
 use crate::cycle::status_registers::{SATPRegister, TrapReason};
 use crate::utils::*;
 
-pub trait MMUImplementation<M: MemorySource, MTR: MemoryAccessTracer> {
+pub trait MMUImplementation<M: MemorySource, TR: Tracer> {
     fn read_sapt(&mut self, mode: Mode, trap: &mut TrapReason) -> u32;
     fn write_sapt(&mut self, value: u32, mode: Mode, trap: &mut TrapReason);
     fn map_virtual_to_physical(
@@ -13,7 +14,7 @@ pub trait MMUImplementation<M: MemorySource, MTR: MemoryAccessTracer> {
         mode: Mode,
         access_type: AccessType,
         memory_source: &mut M,
-        tracer: &mut MTR,
+        tracer: &mut TR,
         proc_cycle: u32,
         trap: &mut TrapReason,
     ) -> u64;
@@ -152,7 +153,7 @@ pub struct NoMMU {
     pub sapt: u32,
 }
 
-impl<M: MemorySource, MTR: MemoryAccessTracer> MMUImplementation<M, MTR> for NoMMU {
+impl<M: MemorySource, TR: Tracer> MMUImplementation<M, TR> for NoMMU {
     #[must_use]
     #[inline(always)]
     fn read_sapt(&mut self, _mode: Mode, _trap: &mut TrapReason) -> u32 {
@@ -172,7 +173,7 @@ impl<M: MemorySource, MTR: MemoryAccessTracer> MMUImplementation<M, MTR> for NoM
         _mode: Mode,
         _access_type: AccessType,
         _memory_source: &mut M,
-        _tracer: &mut MTR,
+        _tracer: &mut TR,
         _proc_cycle: u32,
         _trap: &mut TrapReason,
     ) -> u64 {
@@ -185,7 +186,7 @@ pub struct SimpleMMU {
     pub sapt: u32,
 }
 
-impl<M: MemorySource, MTR: MemoryAccessTracer> MMUImplementation<M, MTR> for SimpleMMU {
+impl<M: MemorySource, TR: Tracer> MMUImplementation<M, TR> for SimpleMMU {
     #[must_use]
     #[inline(always)]
     fn read_sapt(&mut self, _mode: Mode, _trap: &mut TrapReason) -> u32 {
@@ -209,7 +210,7 @@ impl<M: MemorySource, MTR: MemoryAccessTracer> MMUImplementation<M, MTR> for Sim
         mode: Mode,
         access_type: AccessType,
         memory_source: &mut M,
-        tracer: &mut MTR,
+        tracer: &mut TR,
         proc_cycle: u32,
         trap: &mut TrapReason,
     ) -> u64 {

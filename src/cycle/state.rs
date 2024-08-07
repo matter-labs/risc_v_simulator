@@ -1,9 +1,9 @@
-use std::collections::HashMap;
 use std::hint::unreachable_unchecked;
 
 use super::status_registers::*;
-use crate::abstractions::memory::{AccessType, MemoryAccessTracer, MemorySource};
+use crate::abstractions::memory::{AccessType, MemorySource};
 use crate::abstractions::non_determinism::NonDeterminismCSRSource;
+use crate::abstractions::tracer::Tracer;
 use crate::abstractions::{mem_read, mem_write};
 use crate::mmu::MMUImplementation;
 
@@ -247,97 +247,67 @@ impl RiscV32State {
 
     #[must_use]
     #[inline(always)]
-    pub fn get_first_register<MTR: MemoryAccessTracer>(
+    pub fn get_first_register<TR: Tracer>(
         &self,
         reg_idx: u32,
         proc_cycle: u32,
         cycle_timestamp: u32,
-        memory_tracer: &mut MTR,
+        tracer: &mut TR,
     ) -> u32 {
         let res = self.registers[reg_idx as usize];
-        memory_tracer.add_query(
-            proc_cycle,
-            cycle_timestamp,
-            AccessType::RegReadFirst,
-            reg_idx as u64,
-            res,
-            res,
-        );
+        tracer.trace_rs1_read(reg_idx, res, proc_cycle, cycle_timestamp);
+
         res
     }
 
     #[must_use]
     #[inline(always)]
-    pub fn get_second_register<MTR: MemoryAccessTracer>(
+    pub fn get_second_register<TR: Tracer>(
         &self,
         reg_idx: u32,
         proc_cycle: u32,
         cycle_timestamp: u32,
-        memory_tracer: &mut MTR,
+        tracer: &mut TR,
     ) -> u32 {
         let res = self.registers[reg_idx as usize];
-        memory_tracer.add_query(
-            proc_cycle,
-            cycle_timestamp,
-            AccessType::RegReadSecond,
-            reg_idx as u64,
-            res,
-            res,
-        );
+        tracer.trace_rs2_read(reg_idx, res, proc_cycle, cycle_timestamp);
+
         res
     }
 
     #[inline(always)]
-    pub fn set_register<MTR: MemoryAccessTracer>(
+    pub fn set_register<TR: Tracer>(
         &mut self,
         reg_idx: u32,
         value: u32,
         proc_cycle: u32,
         cycle_timestamp: u32,
-        memory_tracer: &mut MTR,
+        tracer: &mut TR,
     ) {
+        let read_value = self.registers[reg_idx as usize];
         if reg_idx != 0 {
-            let read_value = self.registers[reg_idx as usize];
             self.registers[reg_idx as usize] = value;
-            memory_tracer.add_query(
-                proc_cycle,
-                cycle_timestamp,
-                AccessType::RegWrite,
-                reg_idx as u64,
-                read_value,
-                value,
-            );
-        } else {
-            if MTR::TRACE_X0_ACCESS {
-                memory_tracer.add_query(
-                    proc_cycle,
-                    cycle_timestamp,
-                    AccessType::RegWrite,
-                    reg_idx as u64,
-                    0,
-                    0,
-                );
-            }
         }
+        tracer.trace_rd_write(reg_idx, read_value, value, proc_cycle, cycle_timestamp);
     }
 
     pub fn cycle<
         'a,
         M: MemorySource,
-        MTR: MemoryAccessTracer,
+        TR: Tracer,
         ND: NonDeterminismCSRSource<M>,
-        MMU: MMUImplementation<M, MTR>,
+        MMU: MMUImplementation<M, TR>,
     >(
         &'a mut self,
         memory_source: &'a mut M,
-        memory_tracer: &'a mut MTR,
+        tracer: &'a mut TR,
         mmu: &'a mut MMU,
         non_determinism_source: &mut ND,
         proc_cycle: u32,
     ) {
         self.cycle_ext(
             memory_source,
-            memory_tracer,
+            tracer,
             mmu,
             non_determinism_source,
             proc_cycle,
@@ -348,19 +318,22 @@ impl RiscV32State {
     pub fn cycle_ext<
         'a,
         M: MemorySource,
-        MTR: MemoryAccessTracer,
+        TR: Tracer,
         ND: NonDeterminismCSRSource<M>,
-        MMU: MMUImplementation<M, MTR>,
+        MMU: MMUImplementation<M, TR>,
     >(
         &'a mut self,
         memory_source: &'a mut M,
-        memory_tracer: &'a mut MTR,
+        tracer: &'a mut TR,
         mmu: &'a mut MMU,
         non_determinism_source: &mut ND,
         proc_cycle: u32,
         cycle_timestamp: u32,
     ) {
+        tracer.at_cycle_start(&*self);
+
         if self.extra_flags.get_wait_for_interrupt() != 0 {
+            tracer.at_cycle_end(&*self);
             return;
         }
 
@@ -379,7 +352,7 @@ impl RiscV32State {
                 current_privilege_mode,
                 AccessType::Instruction,
                 memory_source,
-                memory_tracer,
+                tracer,
                 proc_cycle,
                 &mut trap,
             );
@@ -391,7 +364,7 @@ impl RiscV32State {
 
             instr = mem_read(
                 memory_source,
-                memory_tracer,
+                tracer,
                 instruction_phys_address,
                 4,
                 AccessType::Instruction,
@@ -414,12 +387,10 @@ impl RiscV32State {
             let mut rd = get_rd(instr);
             // we will ALWAYS read formal rs1 and rs2
             let formal_rs1 = get_formal_rs1(instr);
-            let formal_rs2 = get_formal_rs1(instr);
+            let formal_rs2 = get_formal_rs2(instr);
 
-            let rs1 =
-                self.get_first_register(formal_rs1, proc_cycle, cycle_timestamp, memory_tracer);
-            let rs2 =
-                self.get_second_register(formal_rs2, proc_cycle, cycle_timestamp, memory_tracer);
+            let rs1 = self.get_first_register(formal_rs1, proc_cycle, cycle_timestamp, tracer);
+            let rs2 = self.get_second_register(formal_rs2, proc_cycle, cycle_timestamp, tracer);
 
             // note on all the PC operations below: if we modify PC in the opcode,
             // we subtract 4 from it, to later on add 4 once at the end of the loop. For MOST
@@ -528,7 +499,7 @@ impl RiscV32State {
                     // will be abstracted away into external interface hiding memory translation too
                     let operand_phys_address = mmu.map_virtual_to_physical(
                         virtual_address, current_privilege_mode, AccessType::MemLoad, memory_source,
-                        memory_tracer, proc_cycle, &mut trap
+                        tracer, proc_cycle, &mut trap
                     );
                     if trap.is_a_trap() {
                         // error during address translation
@@ -549,7 +520,7 @@ impl RiscV32State {
                             // that doesn't step over 4 byte boundary ever, meaning even though formal address is not 4 byte aligned,
                             // loads of u8/u16/u32 are still "aligned"
                             let operand = mem_read(
-                                memory_source, memory_tracer, operand_phys_address,
+                                memory_source, tracer, operand_phys_address,
                                 num_bytes, AccessType::MemLoad, proc_cycle, cycle_timestamp, &mut trap
                             );
                             if trap.is_a_trap() {
@@ -588,7 +559,7 @@ impl RiscV32State {
                     // we formally access it once, but most likely full memory access
                     // will be abstracted away into external interface hiding memory translation too
                     let operand_phys_address = mmu.map_virtual_to_physical(
-                        virtual_address, current_privilege_mode, AccessType::MemStore, memory_source, memory_tracer,
+                        virtual_address, current_privilege_mode, AccessType::MemStore, memory_source, tracer,
                         proc_cycle, &mut trap
                     );
                     if trap.is_a_trap() {
@@ -603,7 +574,7 @@ impl RiscV32State {
                             let store_length = 1 << a;
                             // memory handles the write in full, whether it's aligned or not, or whatever
                             mem_write(
-                                memory_source, memory_tracer, operand_phys_address, rs2, store_length,
+                                memory_source, tracer, operand_phys_address, rs2, store_length,
                                 proc_cycle, cycle_timestamp, &mut trap
                             );
                             if trap.is_a_trap() {
@@ -623,7 +594,7 @@ impl RiscV32State {
                 => {
                     const TEST_REG_REG_MASK: u32 = 0x20;
                     let is_r_type = instr & TEST_REG_REG_MASK != 0;
-                    let operand_1 = self.get_first_register(rs1, proc_cycle, cycle_timestamp, memory_tracer);
+                    let operand_1 = rs1;
                     let operand_2 = if is_r_type {
                         rs2
                     } else {
@@ -968,7 +939,7 @@ impl RiscV32State {
             // If there was a trap, do NOT allow register writeback.
             debug_assert_eq!(trap, TrapReason::NoTrap);
             // println!("Set x{:02} = 0x{:08x}", rd, ret_val);
-            self.set_register(rd, ret_val, proc_cycle, cycle_timestamp, memory_tracer);
+            self.set_register(rd, ret_val, proc_cycle, cycle_timestamp, tracer);
 
             // traps below will update PC themself, so it only happens if we have NO trap
             pc = pc.wrapping_add(4u32);
@@ -1014,6 +985,8 @@ impl RiscV32State {
 
         // for debugging
         self.sapt = mmu.read_sapt(current_privilege_mode, &mut trap);
+
+        tracer.at_cycle_end(&*self);
 
         //let trap = trap.as_register_value();
         //println!("end of cycle: PC = 0x{:08x}, trap = 0x{:08x}, interrupt = {:?}", self.pc, trap, trap & INTERRUPT_MASK != 0);

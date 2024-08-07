@@ -1,16 +1,18 @@
-use self::memory::{MemoryAccessTracer, MemorySource};
+use self::memory::MemorySource;
 use crate::abstractions::memory::AccessType;
 use crate::cycle::status_registers::TrapReason;
 use std::hint::unreachable_unchecked;
+use tracer::Tracer;
 
 pub mod memory;
 pub mod non_determinism;
+pub mod tracer;
 
 #[must_use]
 #[inline(always)]
-pub fn mem_read<M: MemorySource, MTR: MemoryAccessTracer>(
+pub fn mem_read<M: MemorySource, TR: Tracer>(
     memory_source: &mut M,
-    tracer: &mut MTR,
+    tracer: &mut TR,
     phys_address: u64,
     num_bytes: u32,
     access_type: AccessType,
@@ -25,17 +27,10 @@ pub fn mem_read<M: MemorySource, MTR: MemoryAccessTracer>(
     let value = match (unalignment, num_bytes) {
         (0, 4) | (0, 2) | (2, 2) | (0, 1) | (1, 1) | (2, 1) | (3, 1) => {
             let value = memory_source.get(aligned_address, access_type, trap);
-            if MTR::TRACE_INSTRUCTION_READS == false && access_type == AccessType::Instruction {
-                // we skip such access
+            if access_type == AccessType::Instruction {
+                tracer.trace_opcode_read(aligned_address, value, proc_cycle, cycle_timestamp);
             } else {
-                tracer.add_query(
-                    proc_cycle,
-                    cycle_timestamp,
-                    access_type,
-                    aligned_address,
-                    value,
-                    value,
-                );
+                tracer.trace_ram_read(aligned_address, value, proc_cycle, cycle_timestamp);
             }
 
             let unalignment_bits = unalignment * 8;
@@ -61,9 +56,9 @@ pub fn mem_read<M: MemorySource, MTR: MemoryAccessTracer>(
 }
 
 #[inline(always)]
-pub fn mem_write<M: MemorySource, MTR: MemoryAccessTracer>(
+pub fn mem_write<M: MemorySource, TR: Tracer>(
     memory_source: &mut M,
-    tracer: &mut MTR,
+    tracer: &mut TR,
     phys_address: u64,
     value: u32,
     num_bytes: u32,
@@ -88,16 +83,6 @@ pub fn mem_write<M: MemorySource, MTR: MemoryAccessTracer>(
             if trap.is_a_trap() {
                 return;
             }
-            if MTR::MERGE_READ_WRITE == false {
-                tracer.add_query(
-                    proc_cycle,
-                    cycle_timestamp,
-                    AccessType::MemLoad,
-                    aligned_address,
-                    old_value,
-                    old_value,
-                );
-            }
 
             let value_mask = match num_bytes {
                 1 => 0x000000ffu32,
@@ -121,17 +106,16 @@ pub fn mem_write<M: MemorySource, MTR: MemoryAccessTracer>(
             let new_value = ((value & value_mask) << (unalignment * 8)) | (old_value & mask_old);
 
             memory_source.set(aligned_address, new_value, AccessType::MemStore, trap);
+            tracer.trace_ram_read_write(
+                phys_address,
+                old_value,
+                value,
+                proc_cycle,
+                cycle_timestamp,
+            );
             if trap.is_a_trap() {
                 return;
             }
-            tracer.add_query(
-                proc_cycle,
-                cycle_timestamp,
-                AccessType::MemStore,
-                aligned_address,
-                old_value,
-                new_value,
-            );
         }
 
         _ => {
