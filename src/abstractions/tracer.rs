@@ -1,7 +1,9 @@
 use crate::cycle::state::RiscV32State;
 
 pub trait Tracer {
-    fn create_from_initial_state(state: &RiscV32State) -> Self;
+    type AuxData;
+
+    fn create_from_initial_state(state: &RiscV32State, aux_data: Self::AuxData) -> Self;
 
     #[inline(always)]
     fn at_cycle_start(&mut self, current_state: &RiscV32State) {}
@@ -102,7 +104,9 @@ pub trait Tracer {
 }
 
 impl Tracer for () {
-    fn create_from_initial_state(_state: &RiscV32State) -> Self {
+    type AuxData = ();
+
+    fn create_from_initial_state(_state: &RiscV32State, _aux_data: Self::AuxData) -> Self {
         ()
     }
 }
