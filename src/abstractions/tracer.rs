@@ -110,7 +110,3 @@ impl Tracer for () {
         ()
     }
 }
-
-pub trait TracerExt<I: 'static + Clone>: Tracer {
-    fn inflate(self) -> I;
-}
