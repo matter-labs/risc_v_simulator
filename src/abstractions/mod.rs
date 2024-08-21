@@ -109,7 +109,7 @@ pub fn mem_write<M: MemorySource, TR: Tracer>(
             tracer.trace_ram_read_write(
                 phys_address,
                 old_value,
-                value,
+                new_value,
                 proc_cycle,
                 cycle_timestamp,
             );
