@@ -1,5 +1,4 @@
 use crate::cycle::status_registers::TrapReason;
-use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
@@ -92,6 +91,7 @@ impl MemorySource for VectorMemoryImpl {
     #[must_use]
     #[inline(always)]
     fn get(&self, phys_address: u64, access_type: AccessType, trap: &mut TrapReason) -> u32 {
+        debug_assert_eq!(phys_address % 4, 0);
         if ((phys_address / 4) as usize) < self.inner.len() {
             self.inner[(phys_address / 4) as usize]
         } else {
@@ -114,6 +114,7 @@ impl MemorySource for VectorMemoryImpl {
         access_type: AccessType,
         trap: &mut TrapReason,
     ) {
+        debug_assert_eq!(phys_address % 4, 0);
         if ((phys_address / 4) as usize) < self.inner.len() {
             self.inner[(phys_address / 4) as usize] = value;
         } else {

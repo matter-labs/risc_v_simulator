@@ -1,5 +1,11 @@
 use crate::cycle::state::RiscV32State;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BatchAccessPartialData {
+    Read { read_value: u32 },
+    Write { read_value: u32, written_value: u32 },
+}
+
 pub trait Tracer {
     type AuxData;
 
@@ -97,6 +103,17 @@ pub trait Tracer {
         satp_value: u32,
         virtual_address: u64,
         phys_address: u64,
+        proc_cycle: u32,
+        cycle_timestamp: u32,
+    ) {
+    }
+
+    #[inline(always)]
+    fn trace_batch_memory_access(
+        &mut self,
+        access_id: u32,
+        phys_address_high: u16,
+        accesses: &[BatchAccessPartialData],
         proc_cycle: u32,
         cycle_timestamp: u32,
     ) {

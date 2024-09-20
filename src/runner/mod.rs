@@ -46,6 +46,33 @@ pub fn run_simple_with_entry_point_and_non_determimism_source<
     sim.non_determinism_source
 }
 
+// pub fn run_simple_with_entry_point_with_delegation_and_non_determimism_source<
+//     S: NonDeterminismCSRSource<VectorMemoryImpl>,
+// >(
+//     config: SimulatorConfig,
+//     non_determinism_source: S,
+// ) -> S {
+//     let state = RiscV32State::initial(config.entry_point);
+//     let memory_tracer = ();
+//     let mmu = NoMMU { sapt: 0 };
+
+//     let mut memory = VectorMemoryImpl::new_for_byte_size(1 << 32); // use full RAM
+//     memory.load_image(config.entry_point, read_bin(&config.bin_path).into_iter());
+
+//     let mut sim = Simulator::new(
+//         config,
+//         state,
+//         memory,
+//         memory_tracer,
+//         mmu,
+//         non_determinism_source,
+//     );
+
+//     sim.run(|_, _| {}, |_, _| {});
+
+//     sim.non_determinism_source
+// }
+
 pub fn run_simulator_with_traces(config: SimulatorConfig) -> (StateTracer, ()) {
     let state = RiscV32State::initial(CUSTOM_ENTRY_POINT);
     let memory_tracer = ();

@@ -1,6 +1,7 @@
 use std::hint::unreachable_unchecked;
 
 use super::status_registers::*;
+use crate::abstractions::csr_processor::{self, CustomCSRProcessor};
 use crate::abstractions::memory::{AccessType, MemorySource};
 use crate::abstractions::non_determinism::NonDeterminismCSRSource;
 use crate::abstractions::tracer::Tracer;
@@ -305,11 +306,24 @@ impl RiscV32State {
         non_determinism_source: &mut ND,
         proc_cycle: u32,
     ) {
+        // use crate::cycle::state::csr_processor::NoExtraCSRs;
+        // self.cycle_ext(
+        //     memory_source,
+        //     tracer,
+        //     mmu,
+        //     non_determinism_source,
+        //     &mut NoExtraCSRs,
+        //     proc_cycle,
+        //     proc_cycle,
+        // );
+
+        use crate::delegations::DelegationsCSRProcessor;
         self.cycle_ext(
             memory_source,
             tracer,
             mmu,
             non_determinism_source,
+            &mut DelegationsCSRProcessor,
             proc_cycle,
             proc_cycle,
         );
@@ -321,12 +335,14 @@ impl RiscV32State {
         TR: Tracer,
         ND: NonDeterminismCSRSource<M>,
         MMU: MMUImplementation<M, TR>,
+        CSR: CustomCSRProcessor,
     >(
         &'a mut self,
         memory_source: &'a mut M,
         tracer: &'a mut TR,
         mmu: &'a mut MMU,
         non_determinism_source: &mut ND,
+        csr_processor: &mut CSR,
         proc_cycle: u32,
         cycle_timestamp: u32,
     ) {
@@ -800,10 +816,12 @@ impl RiscV32State {
                                 // to imporve oracle usability we can try to avoid read
                                 // if we intend to write, so check oracle config
                                 ret_val = if ND::SHOULD_MOCK_READS_BEFORE_WRITES {
-                                    if funct3 == 1 //CSRRW
-                                    || funct3 == 5 //CSRRWI
+                                    // all our oracle accesses are implemented via CSRRW
+                                    // with either rd == 0 or rs1 == 0, so if we have
+                                    // rd == 0 here it's just a read
+                                    if rd == 0
                                     {
-                                        // we consider main intention to be write,
+                                        // we consider main intention to be write into CSR,
                                         // so do NOT perform `read()`
                                         0
                                     } else {
@@ -816,8 +834,11 @@ impl RiscV32State {
                                 tracer.trace_non_determinism_read(ret_val, proc_cycle, cycle_timestamp);
                             }
                             _ => {
-                                trap = TrapReason::IllegalInstruction;
-                                break 'cycle_block;
+                                println!("Custom CSR = 0x{:04x}", csr_number);
+                                csr_processor.process_read(memory_source, tracer, mmu, csr_number, rs1, rs1_as_imm, &mut ret_val, &mut trap, proc_cycle, cycle_timestamp);
+                                if trap.is_a_trap() {
+                                    break 'cycle_block;
+                                }
                             }
                         }
 
@@ -852,10 +873,9 @@ impl RiscV32State {
                             0x344 => self.machine_mode_trap_data.state.ip = write_val, // mip
                             NON_DETERMINISM_CSR => {
                                 if ND::SHOULD_IGNORE_WRITES_AFTER_READS {
-                                    if funct3 == 2 //CSRRS
-                                    || funct3 == 3 //CSRRC
-                                    || funct3 == 6 //CSRRSI
-                                    || funct3 == 7 //CSRRCI 
+                                    // if we have rs1 == 0 then we should ignore write into CSR,
+                                    // as our main intension was to read
+                                    if rs1_as_imm == 0 // index of rs1
                                     {
                                         // do nothing
                                     } else {
@@ -866,8 +886,11 @@ impl RiscV32State {
                                 }
                             }
                             _ => {
-                                trap = TrapReason::IllegalInstruction;
-                                break 'cycle_block;
+                                println!("Custom CSR = 0x{:04x}", csr_number);
+                                csr_processor.process_write(memory_source, tracer, mmu, csr_number, rs1, rs1_as_imm, &mut trap, proc_cycle, cycle_timestamp);
+                                if trap.is_a_trap() {
+                                    break 'cycle_block;
+                                }
                             }
                         }
 

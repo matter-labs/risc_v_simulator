@@ -4,6 +4,7 @@ use crate::cycle::status_registers::TrapReason;
 use std::hint::unreachable_unchecked;
 use tracer::Tracer;
 
+pub mod csr_processor;
 pub mod memory;
 pub mod non_determinism;
 pub mod tracer;
