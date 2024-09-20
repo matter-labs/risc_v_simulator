@@ -107,9 +107,9 @@ pub fn mem_write<M: MemorySource, TR: Tracer>(
 
             memory_source.set(aligned_address, new_value, AccessType::MemStore, trap);
             tracer.trace_ram_read_write(
-                phys_address,
+                aligned_address,
                 old_value,
-                value,
+                new_value,
                 proc_cycle,
                 cycle_timestamp,
             );

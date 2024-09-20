@@ -618,7 +618,7 @@ impl RiscV32State {
                                 if operand_2 == 0 {
                                     -1i32 as u32
                                 } else {
-                                    if operand_1 as i32 == i32::MIN && operand_1 as i32 == -1 {
+                                    if operand_1 as i32 == i32::MIN && operand_2 as i32 == -1 {
                                         operand_1
                                     } else {
                                         ((operand_1 as i32) / (operand_2 as i32)) as u32
@@ -638,7 +638,7 @@ impl RiscV32State {
                                 if operand_2 == 0 {
                                     operand_1
                                 } else {
-                                    if operand_1 as i32 == i32::MIN && operand_1 as i32 == -1 {
+                                    if operand_1 as i32 == i32::MIN && operand_2 as i32 == -1 {
                                         0u32
                                     } else {
                                         ((operand_1 as i32) % (operand_2 as i32)) as u32
@@ -646,7 +646,7 @@ impl RiscV32State {
                                 }
                             },
                             7 => {
-                                // REM
+                                // REMU
                                 if operand_2 == 0 {
                                     operand_1
                                 } else {
