@@ -306,27 +306,32 @@ impl RiscV32State {
         non_determinism_source: &mut ND,
         proc_cycle: u32,
     ) {
-        // use crate::cycle::state::csr_processor::NoExtraCSRs;
-        // self.cycle_ext(
-        //     memory_source,
-        //     tracer,
-        //     mmu,
-        //     non_determinism_source,
-        //     &mut NoExtraCSRs,
-        //     proc_cycle,
-        //     proc_cycle,
-        // );
-
-        use crate::delegations::DelegationsCSRProcessor;
-        self.cycle_ext(
-            memory_source,
-            tracer,
-            mmu,
-            non_determinism_source,
-            &mut DelegationsCSRProcessor,
-            proc_cycle,
-            proc_cycle,
-        );
+        #[cfg(not(feature = "delegations"))]
+        {
+            use crate::cycle::state::csr_processor::NoExtraCSRs;
+            self.cycle_ext(
+                memory_source,
+                tracer,
+                mmu,
+                non_determinism_source,
+                &mut NoExtraCSRs,
+                proc_cycle,
+                proc_cycle,
+            );
+        }
+        #[cfg(feature = "delegations")]
+        {
+            use crate::delegations::DelegationsCSRProcessor;
+            self.cycle_ext(
+                memory_source,
+                tracer,
+                mmu,
+                non_determinism_source,
+                &mut DelegationsCSRProcessor,
+                proc_cycle,
+                proc_cycle,
+            );
+        }
     }
 
     pub fn cycle_ext<
