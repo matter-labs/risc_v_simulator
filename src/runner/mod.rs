@@ -24,7 +24,7 @@ pub fn run_simple_with_entry_point_and_non_determimism_source<
 >(
     config: SimulatorConfig,
     non_determinism_source: S,
-) -> S {
+) -> (S, RiscV32State) {
     let state = RiscV32State::initial(config.entry_point);
     let memory_tracer = ();
     let mmu = NoMMU { sapt: 0 };
@@ -43,7 +43,7 @@ pub fn run_simple_with_entry_point_and_non_determimism_source<
 
     sim.run(|_, _| {}, |_, _| {});
 
-    sim.non_determinism_source
+    (sim.non_determinism_source, sim.state)
 }
 
 // pub fn run_simple_with_entry_point_with_delegation_and_non_determimism_source<

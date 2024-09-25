@@ -54,15 +54,6 @@ pub enum QuasiUARTSourceState {
 
 impl QuasiUARTSource {
     const HELLO_VALUE: u32 = u32::MAX;
-
-    pub fn get_possible_program_output(&self) -> [u32; 8] {
-        let mut result = [0u32; 8];
-        for (dst, src) in result.iter_mut().zip(self.last_values_buffer.iter()) {
-            *dst = *src;
-        }
-
-        result
-    }
 }
 
 impl<M: MemorySource> NonDeterminismCSRSource<M> for QuasiUARTSource {
