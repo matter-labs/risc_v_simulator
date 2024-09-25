@@ -1,10 +1,12 @@
+use crate::cycle::status_registers::TrapReason;
+
 pub mod quasi_uart;
 
 // we assume that any necessary tracing is INSIDE of the MMIO
 pub trait MMIOSource {
     fn address_range(&self) -> std::ops::Range<u64>;
-    fn read(&mut self, address: u64, trap: &mut u32) -> u32;
-    fn write(&mut self, address: u64, value: u32, trap: &mut u32);
+    fn read(&mut self, address: u64, trap: &mut TrapReason) -> u32;
+    fn write(&mut self, address: u64, value: u32, trap: &mut TrapReason);
 }
 
 pub struct MMIOImplementation<'a, const N: usize> {
@@ -38,7 +40,7 @@ impl<'a, const N: usize> MMIOImplementation<'a, N> {
         }
     }
 
-    pub fn read(&mut self, phys_address: u64, trap: &mut u32) -> Result<u32, ()> {
+    pub fn read(&mut self, phys_address: u64, trap: &mut TrapReason) -> Result<u32, ()> {
         for (range, source) in self.sources.iter_mut() {
             if range.contains(&phys_address) {
                 let value = source.read(phys_address, trap);
@@ -50,7 +52,12 @@ impl<'a, const N: usize> MMIOImplementation<'a, N> {
         Err(())
     }
 
-    pub fn write(&mut self, phys_address: u64, value: u32, trap: &mut u32) -> Result<(), ()> {
+    pub fn write(
+        &mut self,
+        phys_address: u64,
+        value: u32,
+        trap: &mut TrapReason,
+    ) -> Result<(), ()> {
         for (range, source) in self.sources.iter_mut() {
             if range.contains(&phys_address) {
                 source.write(phys_address, value, trap);

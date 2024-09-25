@@ -1,12 +1,63 @@
 use crate::cycle::status_registers::TrapReason;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum AccessType {
+    Instruction = 0,
+    MemLoad = 1,
+    MemStore = 2,
+    RegReadFirst = 3,
+    RegReadSecond = 4,
+    RegWrite = 5,
+    None = 6,
+}
+pub const NUM_DIFFERENT_ACCESS_TYPES: usize = 6;
+
+impl AccessType {
+    pub fn is_write_access(&self) -> bool {
+        match self {
+            AccessType::MemStore | AccessType::RegWrite | AccessType::None => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_read_access(&self) -> bool {
+        !self.is_write_access()
+    }
+
+    pub fn is_reg_access(&self) -> bool {
+        match self {
+            AccessType::RegReadFirst | AccessType::RegReadSecond | AccessType::RegWrite => true,
+            _ => false,
+        }
+    }
+
+    pub fn from_idx(idx: u32) -> Self {
+        match idx {
+            0 => AccessType::Instruction,
+            1 => AccessType::MemLoad,
+            2 => AccessType::MemStore,
+            3 => AccessType::RegReadFirst,
+            4 => AccessType::RegReadSecond,
+            5 => AccessType::RegWrite,
+            _ => AccessType::None,
+        }
+    }
+}
+
 pub trait MemorySource {
-    fn set(&mut self, phys_address: u64, value: u32, access_type: AccessType, trap: &mut u32);
-    fn get(&self, phys_address: u64, access_type: AccessType, trap: &mut u32) -> u32;
+    fn set(
+        &mut self,
+        phys_address: u64,
+        value: u32,
+        access_type: AccessType,
+        trap: &mut TrapReason,
+    );
+    fn get(&self, phys_address: u64, access_type: AccessType, trap: &mut TrapReason) -> u32;
 }
 
 pub struct VectorMemoryImpl {
-    pub(crate) inner: Vec<u32>,
+    pub inner: Vec<u32>,
 }
 
 impl VectorMemoryImpl {
@@ -17,21 +68,38 @@ impl VectorMemoryImpl {
             inner: vec![0u32; word_size],
         }
     }
+
+    pub fn populate(&mut self, address: u32, value: u32) {
+        assert!(address % 4 == 0);
+        self.inner[(address / 4) as usize] = value;
+    }
+
+    pub fn load_image<'a, B>(&mut self, entry_point: u32, bytes: B)
+    where
+        B: Iterator<Item = u8>,
+    {
+        for (word, dst) in bytes
+            .array_chunks::<4>()
+            .zip(self.inner[((entry_point / 4) as usize)..].iter_mut())
+        {
+            *dst = u32::from_le_bytes(word);
+        }
+    }
 }
 
 impl MemorySource for VectorMemoryImpl {
     #[must_use]
     #[inline(always)]
-    fn get(&self, phys_address: u64, access_type: AccessType, trap: &mut u32) -> u32 {
+    fn get(&self, phys_address: u64, access_type: AccessType, trap: &mut TrapReason) -> u32 {
+        debug_assert_eq!(phys_address % 4, 0);
         if ((phys_address / 4) as usize) < self.inner.len() {
             self.inner[(phys_address / 4) as usize]
         } else {
             match access_type {
-                AccessType::Instruction => {
-                    *trap = TrapReason::InstructionAccessFault.as_register_value()
-                }
-                AccessType::Load => *trap = TrapReason::LoadAccessFault.as_register_value(),
-                AccessType::Store => *trap = TrapReason::StoreOrAMOAccessFault.as_register_value(),
+                AccessType::Instruction => *trap = TrapReason::InstructionAccessFault,
+                AccessType::MemLoad => *trap = TrapReason::LoadAccessFault,
+                AccessType::MemStore => *trap = TrapReason::StoreOrAMOAccessFault,
+                _ => unreachable!(),
             }
 
             0
@@ -39,72 +107,23 @@ impl MemorySource for VectorMemoryImpl {
     }
 
     #[inline(always)]
-    fn set(&mut self, phys_address: u64, value: u32, access_type: AccessType, trap: &mut u32) {
+    fn set(
+        &mut self,
+        phys_address: u64,
+        value: u32,
+        access_type: AccessType,
+        trap: &mut TrapReason,
+    ) {
+        debug_assert_eq!(phys_address % 4, 0);
         if ((phys_address / 4) as usize) < self.inner.len() {
             self.inner[(phys_address / 4) as usize] = value;
         } else {
             match access_type {
-                AccessType::Instruction => {
-                    *trap = TrapReason::InstructionAccessFault.as_register_value()
-                }
-                AccessType::Load => *trap = TrapReason::LoadAccessFault.as_register_value(),
-                AccessType::Store => *trap = TrapReason::StoreOrAMOAccessFault.as_register_value(),
+                AccessType::Instruction => *trap = TrapReason::InstructionAccessFault,
+                AccessType::MemLoad => *trap = TrapReason::LoadAccessFault,
+                AccessType::MemStore => *trap = TrapReason::StoreOrAMOAccessFault,
+                _ => unreachable!(),
             }
         }
-    }
-}
-
-pub trait Timestamp: 'static + Clone + Copy + std::fmt::Debug {
-    fn new_cycle_timestamp(self) -> Self;
-    fn update_after_subaccess(&mut self);
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u32)]
-pub enum AccessType {
-    Instruction = 0,
-    Load = 1,
-    Store = 2,
-}
-
-// we deliberately assume that no more 16 accesses can happen per cycle
-impl Timestamp for u32 {
-    fn new_cycle_timestamp(self) -> Self {
-        let new = self & !(15u32); // cleanup low
-        new.wrapping_add(16u32) // increment
-    }
-
-    fn update_after_subaccess(&mut self) {
-        *self = self.wrapping_add(1u32)
-    }
-}
-
-pub trait MemoryAccessTracer {
-    type Timestamp: Timestamp;
-
-    fn add_query(
-        &mut self,
-        phys_address: u64,
-        value: u32,
-        rw_flag: bool,
-        access_type: AccessType,
-        ts: Self::Timestamp,
-        trap: u32,
-    );
-}
-
-impl MemoryAccessTracer for () {
-    type Timestamp = u32;
-
-    #[inline(always)]
-    fn add_query(
-        &mut self,
-        _phys_address: u64,
-        _value: u32,
-        _rw_flag: bool,
-        _access_type: AccessType,
-        _ts: Self::Timestamp,
-        _trap: u32,
-    ) {
     }
 }

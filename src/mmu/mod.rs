@@ -1,22 +1,22 @@
-use crate::abstractions::memory::{AccessType, MemoryAccessTracer, MemorySource};
-use crate::abstractions::MemoryImplementation;
+use crate::abstractions::mem_read;
+use crate::abstractions::memory::{AccessType, MemorySource};
+use crate::abstractions::tracer::Tracer;
 use crate::cycle::state::Mode;
 use crate::cycle::status_registers::{SATPRegister, TrapReason};
 use crate::utils::*;
 
-pub trait MMUImplementation<M: MemorySource, MTR: MemoryAccessTracer> {
-    // we may need to consult memory source and tracer here
-    type AuxilarySource;
-
-    fn read_sapt(&mut self, mode: Mode, trap: &mut u32) -> u32;
-    fn write_sapt(&mut self, value: u32, mode: Mode, trap: &mut u32);
+pub trait MMUImplementation<M: MemorySource, TR: Tracer> {
+    fn read_sapt(&mut self, mode: Mode, trap: &mut TrapReason) -> u32;
+    fn write_sapt(&mut self, value: u32, mode: Mode, trap: &mut TrapReason);
     fn map_virtual_to_physical(
         &self,
         virt_address: u32,
         mode: Mode,
         access_type: AccessType,
-        aux_source: &mut Self::AuxilarySource,
-        trap: &mut u32,
+        memory_source: &mut M,
+        tracer: &mut TR,
+        proc_cycle: u32,
+        trap: &mut TrapReason,
     ) -> u64;
 }
 
@@ -119,9 +119,10 @@ impl PageTableEntry {
         privilege: Mode,
     ) -> bool {
         let mut invalid = privilege == Mode::User && self.test_bit(EntryBit::UserMode) == 0;
-        invalid = invalid || access_type == AccessType::Load && self.test_bit(EntryBit::Read) == 0;
         invalid =
-            invalid || access_type == AccessType::Store && self.test_bit(EntryBit::Write) == 0;
+            invalid || access_type == AccessType::MemLoad && self.test_bit(EntryBit::Read) == 0;
+        invalid =
+            invalid || access_type == AccessType::MemStore && self.test_bit(EntryBit::Write) == 0;
         invalid = invalid
             || access_type == AccessType::Instruction && self.test_bit(EntryBit::Execute) == 0;
 
@@ -136,7 +137,7 @@ impl PageTableEntry {
 
         let mut invalid = self.test_bit(EntryBit::Accessed) == 0;
         invalid =
-            invalid || access_type == AccessType::Store && self.test_bit(EntryBit::Dirty) == 0;
+            invalid || access_type == AccessType::MemStore && self.test_bit(EntryBit::Dirty) == 0;
 
         !invalid
     }
@@ -148,19 +149,21 @@ const SV32_LEVELS: usize = 2;
 const SV32_PTE_SHIFT: u32 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub struct NoMMU;
+pub struct NoMMU {
+    pub sapt: u32,
+}
 
-impl<M: MemorySource, MTR: MemoryAccessTracer> MMUImplementation<M, MTR> for NoMMU {
-    type AuxilarySource = MemoryImplementation<M, MTR>;
-
+impl<M: MemorySource, TR: Tracer> MMUImplementation<M, TR> for NoMMU {
     #[must_use]
     #[inline(always)]
-    fn read_sapt(&mut self, _mode: Mode, _trap: &mut u32) -> u32 {
-        0
+    fn read_sapt(&mut self, _mode: Mode, _trap: &mut TrapReason) -> u32 {
+        self.sapt
     }
 
     #[inline(always)]
-    fn write_sapt(&mut self, _value: u32, _mode: Mode, _trap: &mut u32) {}
+    fn write_sapt(&mut self, value: u32, _mode: Mode, _trap: &mut TrapReason) {
+        self.sapt = value
+    }
 
     #[must_use]
     #[inline(always)]
@@ -169,8 +172,10 @@ impl<M: MemorySource, MTR: MemoryAccessTracer> MMUImplementation<M, MTR> for NoM
         virt_address: u32,
         _mode: Mode,
         _access_type: AccessType,
-        _aux_source: &mut Self::AuxilarySource,
-        _trap: &mut u32,
+        _memory_source: &mut M,
+        _tracer: &mut TR,
+        _proc_cycle: u32,
+        _trap: &mut TrapReason,
     ) -> u64 {
         virt_address as u64
     }
@@ -181,19 +186,17 @@ pub struct SimpleMMU {
     pub sapt: u32,
 }
 
-impl<M: MemorySource, MTR: MemoryAccessTracer> MMUImplementation<M, MTR> for SimpleMMU {
-    type AuxilarySource = MemoryImplementation<M, MTR>;
-
+impl<M: MemorySource, TR: Tracer> MMUImplementation<M, TR> for SimpleMMU {
     #[must_use]
     #[inline(always)]
-    fn read_sapt(&mut self, _mode: Mode, _trap: &mut u32) -> u32 {
+    fn read_sapt(&mut self, _mode: Mode, _trap: &mut TrapReason) -> u32 {
         self.sapt
     }
 
     #[inline(always)]
-    fn write_sapt(&mut self, value: u32, mode: Mode, trap: &mut u32) {
+    fn write_sapt(&mut self, value: u32, mode: Mode, trap: &mut TrapReason) {
         if mode != Mode::Machine {
-            *trap = TrapReason::IllegalInstruction.as_register_value();
+            *trap = TrapReason::IllegalInstruction;
         } else {
             self.sapt = value;
         }
@@ -206,8 +209,10 @@ impl<M: MemorySource, MTR: MemoryAccessTracer> MMUImplementation<M, MTR> for Sim
         virt_address: u32,
         mode: Mode,
         access_type: AccessType,
-        aux_source: &mut Self::AuxilarySource,
-        trap: &mut u32,
+        memory_source: &mut M,
+        tracer: &mut TR,
+        proc_cycle: u32,
+        trap: &mut TrapReason,
     ) -> u64 {
         let should_translate = mode.as_register_value() < Mode::Machine.as_register_value()
             && SATPRegister::is_bare_aligned_bit(self.sapt) != 0;
@@ -224,18 +229,26 @@ impl<M: MemorySource, MTR: MemoryAccessTracer> MMUImplementation<M, MTR> for Sim
 
             for _j in 0..SV32_LEVELS {
                 let pte_addr = a.wrapping_add(vpns[i as usize]);
-                let pte_value = aux_source.read(pte_addr as u64, 4, access_type, trap);
-                if *trap != 0 {
+                let pte_value = mem_read(
+                    memory_source,
+                    tracer,
+                    pte_addr as u64,
+                    4,
+                    access_type,
+                    proc_cycle,
+                    proc_cycle,
+                    trap,
+                );
+                if trap.is_a_trap() {
                     return 0;
                 }
                 pte = PageTableEntry::from_value(pte_value);
                 if pte.is_valid() == false {
                     *trap = match access_type {
-                        AccessType::Instruction => {
-                            TrapReason::InstructionPageFault.as_register_value()
-                        }
-                        AccessType::Load => TrapReason::LoadPageFault.as_register_value(),
-                        AccessType::Store => TrapReason::StoreOrAMOPageFault.as_register_value(),
+                        AccessType::Instruction => TrapReason::InstructionPageFault,
+                        AccessType::MemLoad => TrapReason::LoadPageFault,
+                        AccessType::MemStore => TrapReason::StoreOrAMOPageFault,
+                        _ => unreachable!(),
                     };
                     return 0;
                 }
@@ -252,18 +265,20 @@ impl<M: MemorySource, MTR: MemoryAccessTracer> MMUImplementation<M, MTR> for Sim
 
             if i < 0 {
                 *trap = match access_type {
-                    AccessType::Instruction => TrapReason::InstructionPageFault.as_register_value(),
-                    AccessType::Load => TrapReason::LoadPageFault.as_register_value(),
-                    AccessType::Store => TrapReason::StoreOrAMOPageFault.as_register_value(),
+                    AccessType::Instruction => TrapReason::InstructionPageFault,
+                    AccessType::MemLoad => TrapReason::LoadPageFault,
+                    AccessType::MemStore => TrapReason::StoreOrAMOPageFault,
+                    _ => unreachable!(),
                 };
                 return 0;
             }
 
             if pte.is_valid_for_access_type_in_privilege(access_type, mode) == false {
                 *trap = match access_type {
-                    AccessType::Instruction => TrapReason::InstructionPageFault.as_register_value(),
-                    AccessType::Load => TrapReason::LoadPageFault.as_register_value(),
-                    AccessType::Store => TrapReason::StoreOrAMOPageFault.as_register_value(),
+                    AccessType::Instruction => TrapReason::InstructionPageFault,
+                    AccessType::MemLoad => TrapReason::LoadPageFault,
+                    AccessType::MemStore => TrapReason::StoreOrAMOPageFault,
+                    _ => unreachable!(),
                 };
                 return 0;
             }
@@ -284,9 +299,10 @@ impl<M: MemorySource, MTR: MemoryAccessTracer> MMUImplementation<M, MTR> for Sim
             if i > 0 && ppns[(i - 1) as usize] != 0 {
                 // unaligned superpage
                 *trap = match access_type {
-                    AccessType::Instruction => TrapReason::InstructionPageFault.as_register_value(),
-                    AccessType::Load => TrapReason::LoadPageFault.as_register_value(),
-                    AccessType::Store => TrapReason::StoreOrAMOPageFault.as_register_value(),
+                    AccessType::Instruction => TrapReason::InstructionPageFault,
+                    AccessType::MemLoad => TrapReason::LoadPageFault,
+                    AccessType::MemStore => TrapReason::StoreOrAMOPageFault,
+                    _ => unreachable!(),
                 };
                 return 0;
             }
@@ -294,9 +310,10 @@ impl<M: MemorySource, MTR: MemoryAccessTracer> MMUImplementation<M, MTR> for Sim
             // check A and D flags
             if pte.is_valid_for_ad_flags(access_type) == false {
                 *trap = match access_type {
-                    AccessType::Instruction => TrapReason::InstructionPageFault.as_register_value(),
-                    AccessType::Load => TrapReason::LoadPageFault.as_register_value(),
-                    AccessType::Store => TrapReason::StoreOrAMOPageFault.as_register_value(),
+                    AccessType::Instruction => TrapReason::InstructionPageFault,
+                    AccessType::MemLoad => TrapReason::LoadPageFault,
+                    AccessType::MemStore => TrapReason::StoreOrAMOPageFault,
+                    _ => unreachable!(),
                 };
                 return 0;
             }

@@ -6,7 +6,19 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+rand = "0.8.5"
+ringbuffer = "*"
+addr2line = "0.22"
+object = "*"
+memmap2 = "*"
+inferno = "*"
+blake2s_u32 = { git = "https://github.com/matter-labs/air_compiler.git", branch = "av_one_row_compiler", optional = true }
+# blake2s_u32 = { path = "../air_compiler/blake2s_u32", optional = true }
 
+[features]
+default = []
+# default = ["delegations"]
+delegations = ["blake2s_u32"]
 
 [[bin]]
 name = "runner"
