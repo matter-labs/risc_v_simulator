@@ -728,7 +728,7 @@ impl RiscV32State {
                                 operand_1 ^ operand_2
                             },
                             5 => {
-                                if instr & ROTATE_MASK != 0 {
+                                if instr & ROTATE_MASK == ROTATE_MASK {
                                     operand_1.rotate_right(operand_2 & 0x1f)
                                 } else {
                                     // Arithmetic shift right

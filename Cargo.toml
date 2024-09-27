@@ -15,6 +15,9 @@ inferno = "*"
 blake2s_u32 = { git = "https://github.com/matter-labs/air_compiler.git", branch = "av_one_row_compiler", optional = true }
 # blake2s_u32 = { path = "../air_compiler/blake2s_u32", optional = true }
 
+[dev-dependencies]
+lib-rv32-asm = {git = "https://github.com/shamatar/lib-rv32.git" }
+
 [features]
 default = []
 # default = ["delegations"]
