@@ -6,8 +6,7 @@ fn test_add() {
     test_reg_reg_op(&"add", 0x00000002, 0x00000001, 0x00000001);
     test_reg_reg_op(&"add", 0x0000000a, 0x00000003, 0x00000007);
 
-    test_reg_reg_op_64(
-        &"add",
+    test_reg_reg_op_64(&"add",
         0xffffffffffff8000,
         0x0000000000000000,
         0xffffffffffff8000,
