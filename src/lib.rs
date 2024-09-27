@@ -14,3 +14,6 @@ pub mod utils;
 
 #[cfg(feature = "delegations")]
 pub mod delegations;
+
+#[cfg(test)]
+mod tests;
