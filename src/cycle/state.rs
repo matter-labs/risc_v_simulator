@@ -905,7 +905,7 @@ impl RiscV32State {
                         rd = 0;
                         // mainly we support WFI, MRET, ECALL and EBREAK
                         if csr_number == 0x105 {
-                            println!("WFI: proc_cycle: {:?}", proc_cycle);
+                            println!("WFI: proc_cycle: {:?}, pc = {}, opcode = 0x{:08x}", proc_cycle, pc, instr);
                             self.extra_flags.set_wait_for_interrupt_bit();
                             self.pc = pc.wrapping_add(4u32);
                             return;
