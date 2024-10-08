@@ -93,8 +93,9 @@ impl<M: MemorySource> NonDeterminismCSRSource<M> for QuasiUARTSource {
                 }
                 if reset_and_output {
                     let buffer = std::mem::replace(buffer, Vec::new());
-                    let string = String::from_utf8(buffer).unwrap();
-                    println!("UART: `{}`", string);
+                    // let string = String::from_utf8(buffer).unwrap();
+                    // println!("UART: `{}`", string);
+                    println!("UART: `{}`", String::from_utf8_lossy(&buffer));
                     self.write_state = QuasiUARTSourceState::Ready;
                 }
             }

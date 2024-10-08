@@ -839,7 +839,7 @@ impl RiscV32State {
                                 tracer.trace_non_determinism_read(ret_val, proc_cycle, cycle_timestamp);
                             }
                             _ => {
-                                println!("Custom CSR = 0x{:04x}", csr_number);
+                                println!("Custom CSR = 0x{:04x} READ at cycle {}", csr_number, proc_cycle);
                                 csr_processor.process_read(memory_source, tracer, mmu, csr_number, rs1, rs1_as_imm, &mut ret_val, &mut trap, proc_cycle, cycle_timestamp);
                                 if trap.is_a_trap() {
                                     break 'cycle_block;
@@ -891,7 +891,7 @@ impl RiscV32State {
                                 }
                             }
                             _ => {
-                                println!("Custom CSR = 0x{:04x}", csr_number);
+                                println!("Custom CSR = 0x{:04x} WRITE at cycle {}", csr_number, proc_cycle);
                                 csr_processor.process_write(memory_source, tracer, mmu, csr_number, rs1, rs1_as_imm, &mut trap, proc_cycle, cycle_timestamp);
                                 if trap.is_a_trap() {
                                     break 'cycle_block;
