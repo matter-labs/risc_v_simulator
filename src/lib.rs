@@ -12,7 +12,7 @@ pub mod runner;
 pub mod sim;
 pub mod utils;
 
-#[cfg(feature = "delegations")]
+#[cfg(feature = "delegation")]
 pub mod delegations;
 
 #[cfg(test)]

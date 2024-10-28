@@ -19,9 +19,9 @@ blake2s_u32 = { git = "https://github.com/matter-labs/air_compiler.git", branch 
 lib-rv32-asm = {git = "https://github.com/shamatar/lib-rv32.git" }
 
 [features]
-default = []
-# default = ["delegations"]
-delegations = ["blake2s_u32"]
+# default = []
+default = ["delegation"]
+delegation = ["blake2s_u32"]
 
 [[bin]]
 name = "runner"
