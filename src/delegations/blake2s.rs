@@ -10,7 +10,7 @@ use super::*;
 // - 16x32 words of the input data to mix in
 // at the end we will overwrite first 8 words as the result
 
-pub const BLAKE2S_ROUND_FUNCTION_ABI_NUM_MEM_ACCESSES: usize = 8 + 2 + 16;
+pub const BLAKE2S_ABI_NUM_MEM_ACCESSES: usize = 8 + 2 + 16;
 pub const BLAKE2S_ACCESS_ID: u32 = NON_DETERMINISM_CSR + 1;
 
 pub fn blake2s_round_function<
@@ -32,8 +32,8 @@ pub fn blake2s_round_function<
     let mem_offset = (rs1_value & 0xffff0000) as usize;
 
     // we perform batch accesses
-    let mut accesses = [BatchAccessPartialData::Read { read_value: 0 };
-        BLAKE2S_ROUND_FUNCTION_ABI_NUM_MEM_ACCESSES];
+    let mut accesses =
+        [BatchAccessPartialData::Read { read_value: 0 }; BLAKE2S_ABI_NUM_MEM_ACCESSES];
     let mut it = accesses.iter_mut();
 
     let mut extended_state = [0u32; 16];
