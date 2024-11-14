@@ -49,8 +49,10 @@ pub enum QuasiUARTSourceState {
 }
 
 impl QuasiUARTSourceState {
+    const HELLO_VALUE: u32 = u32::MAX;
+
     pub fn process_write(&mut self, value: u32) {
-        match &mut self {
+        match self {
             QuasiUARTSourceState::Ready => {
                 if value == Self::HELLO_VALUE {
                     *self = QuasiUARTSourceState::Buffering {
@@ -124,10 +126,6 @@ impl QuasiUARTSourceState {
             }
         }
     }
-}
-
-impl QuasiUARTSource {
-    const HELLO_VALUE: u32 = u32::MAX;
 }
 
 impl<M: MemorySource> NonDeterminismCSRSource<M> for QuasiUARTSource {
