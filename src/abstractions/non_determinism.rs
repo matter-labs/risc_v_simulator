@@ -48,21 +48,12 @@ pub enum QuasiUARTSourceState {
     },
 }
 
-impl QuasiUARTSource {
-    const HELLO_VALUE: u32 = u32::MAX;
-}
-
-impl<M: MemorySource> NonDeterminismCSRSource<M> for QuasiUARTSource {
-    fn read(&mut self) -> u32 {
-        self.oracle.pop_front().unwrap_or_default()
-        // self.oracle.pop_front().unwrap()
-    }
-
-    fn write_with_memory_access(&mut self, _memory: &M, value: u32) {
-        match &mut self.write_state {
+impl QuasiUARTSourceState {
+    pub fn process_write(&mut self, value: u32) {
+        match &mut self {
             QuasiUARTSourceState::Ready => {
                 if value == Self::HELLO_VALUE {
-                    self.write_state = QuasiUARTSourceState::Buffering {
+                    *self = QuasiUARTSourceState::Buffering {
                         remaining_words: None,
                         remaining_len_in_bytes: None,
                         buffer: Vec::new(),
@@ -102,7 +93,7 @@ impl<M: MemorySource> NonDeterminismCSRSource<M> for QuasiUARTSource {
                     // let string = String::from_utf8(buffer).unwrap();
                     // println!("UART: `{}`", string);
                     println!("UART: `{}`", String::from_utf8_lossy(&buffer));
-                    self.write_state = QuasiUARTSourceState::Ready;
+                    *self = QuasiUARTSourceState::Ready;
                 }
                 // buffer.extend(value.to_le_bytes());
                 // if
@@ -132,5 +123,20 @@ impl<M: MemorySource> NonDeterminismCSRSource<M> for QuasiUARTSource {
                 // }
             }
         }
+    }
+}
+
+impl QuasiUARTSource {
+    const HELLO_VALUE: u32 = u32::MAX;
+}
+
+impl<M: MemorySource> NonDeterminismCSRSource<M> for QuasiUARTSource {
+    fn read(&mut self) -> u32 {
+        self.oracle.pop_front().unwrap_or_default()
+        // self.oracle.pop_front().unwrap()
+    }
+
+    fn write_with_memory_access(&mut self, _memory: &M, value: u32) {
+        self.write_state.process_write(value);
     }
 }
