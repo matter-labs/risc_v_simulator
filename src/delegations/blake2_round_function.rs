@@ -1,5 +1,5 @@
 use crate::cycle::{state::NON_DETERMINISM_CSR, status_registers::TrapReason};
-use blake2s_u32::{mixing_function, SIGMAS};
+use blake2s_u32::{mixing_function, IV, SIGMAS};
 
 use super::*;
 
@@ -68,6 +68,16 @@ pub fn blake2_round_function<M: MemorySource, TR: Tracer, MMU: MMUImplementation
     let permutation_bitmask = read_value;
     assert!(permutation_bitmask.is_power_of_two());
     let permutation_index = permutation_bitmask.trailing_zeros() as usize;
+
+    if permutation_index == 0 {
+        // overwrite elements 8-11, 13, 15
+        extended_state[8] = IV[0];
+        extended_state[9] = IV[1];
+        extended_state[10] = IV[2];
+        extended_state[11] = IV[3];
+        extended_state[13] = IV[5];
+        extended_state[15] = IV[7];
+    }
 
     // we expect that caller will supply a bitmask, encoding the corresponding choice of sigmas
     let sigma = &SIGMAS[permutation_index];
