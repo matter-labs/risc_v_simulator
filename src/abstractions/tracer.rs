@@ -1,4 +1,4 @@
-use crate::cycle::state::RiscV32State;
+use crate::cycle::{state::RiscV32State, MachineConfig};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum BatchAccessPartialData {
@@ -9,13 +9,16 @@ pub enum BatchAccessPartialData {
 pub trait Tracer {
     type AuxData;
 
-    fn create_from_initial_state(state: &RiscV32State, aux_data: Self::AuxData) -> Self;
+    fn create_from_initial_state<C: MachineConfig>(
+        state: &RiscV32State<C>,
+        aux_data: Self::AuxData,
+    ) -> Self;
 
     #[inline(always)]
-    fn at_cycle_start(&mut self, _current_state: &RiscV32State) {}
+    fn at_cycle_start<C: MachineConfig>(&mut self, _current_state: &RiscV32State<C>) {}
 
     #[inline(always)]
-    fn at_cycle_end(&mut self, _current_state: &RiscV32State) {}
+    fn at_cycle_end<C: MachineConfig>(&mut self, _current_state: &RiscV32State<C>) {}
 
     #[inline(always)]
     fn trace_opcode_read(
@@ -123,7 +126,10 @@ pub trait Tracer {
 impl Tracer for () {
     type AuxData = ();
 
-    fn create_from_initial_state(_state: &RiscV32State, _aux_data: Self::AuxData) -> Self {
+    fn create_from_initial_state<C: MachineConfig>(
+        _state: &RiscV32State<C>,
+        _aux_data: Self::AuxData,
+    ) -> Self {
         ()
     }
 }

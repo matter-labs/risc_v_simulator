@@ -1,13 +1,13 @@
 use std::hint::unreachable_unchecked;
 
-use super::status_registers::*;
+use super::{status_registers::*, MachineConfig};
 use crate::abstractions::csr_processor::CustomCSRProcessor;
 use crate::abstractions::memory::{AccessType, MemorySource};
 use crate::abstractions::non_determinism::NonDeterminismCSRSource;
 use crate::abstractions::tracer::Tracer;
 use crate::abstractions::{mem_read, mem_write};
+use crate::cycle::IMStandardIsaConfig;
 use crate::mmu::MMUImplementation;
-
 use crate::utils::*;
 
 use super::opcode_formats::*;
@@ -141,7 +141,7 @@ impl StateTracer {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RiscV32State {
+pub struct RiscV32State<Config: MachineConfig = IMStandardIsaConfig> {
     pub registers: [u32; NUM_REGISTERS],
     pub pc: u32,
     pub extra_flags: ExtraFlags, // everything that doesn't need full register
@@ -153,9 +153,14 @@ pub struct RiscV32State {
     pub machine_mode_trap_data: ModeStatusAndTrapRegisters,
 
     pub sapt: u32, // for debugging
+
+    _marker: std::marker::PhantomData<Config>,
 }
 
-impl RiscV32State {
+impl<Config: MachineConfig> RiscV32State<Config>
+where
+    [(); { Config::SUPPORT_LOAD_LESS_THAN_WORD } as usize]:,
+{
     pub fn initial(initial_pc: u32) -> Self {
         // we should start in machine mode, the rest is not important and can be by default
         let registers = [0u32; NUM_REGISTERS];
@@ -193,6 +198,7 @@ impl RiscV32State {
             timer_match,
             machine_mode_trap_data,
             sapt,
+            _marker: std::marker::PhantomData,
         }
     }
 
@@ -243,6 +249,7 @@ impl RiscV32State {
             machine_mode_trap_data,
 
             sapt: rng.gen(),
+            _marker: std::marker::PhantomData,
         };
 
         state
@@ -385,7 +392,7 @@ impl RiscV32State {
                 break 'cycle_block;
             }
 
-            instr = mem_read(
+            instr = mem_read::<_, _, false>(
                 memory_source,
                 tracer,
                 instruction_phys_address,
@@ -542,7 +549,7 @@ impl RiscV32State {
                             // Memory implementation should handle read in full. For now we only use one
                             // that doesn't step over 4 byte boundary ever, meaning even though formal address is not 4 byte aligned,
                             // loads of u8/u16/u32 are still "aligned"
-                            let operand = mem_read(
+                            let operand = mem_read::<_, _, { Config::SUPPORT_LOAD_LESS_THAN_WORD } >(
                                 memory_source, tracer, operand_phys_address,
                                 num_bytes, AccessType::MemLoad, proc_cycle, cycle_timestamp, &mut trap
                             );
@@ -550,15 +557,34 @@ impl RiscV32State {
                                 debug_assert_eq!(trap, TrapReason::LoadAddressMisaligned);
                                 break 'cycle_block;
                             }
-                            // now depending on the type of load we extend it
-                            ret_val = match a {
-                                0 => sign_extend_8(operand),
-                                1 => sign_extend_16(operand),
-                                2 => operand,
-                                4 => zero_extend_8(operand),
-                                5 => zero_extend_16(operand),
-                                _ => unsafe {unreachable_unchecked()}
-                            };
+                            if Config::SUPPORT_SIGNED_LOAD {
+                                // now depending on the type of load we extend it
+                                ret_val = match a {
+                                    0 => sign_extend_8(operand),
+                                    1 => sign_extend_16(operand),
+                                    2 => operand,
+                                    4 => zero_extend_8(operand),
+                                    5 => zero_extend_16(operand),
+                                    _ => unsafe {unreachable_unchecked()}
+                                };
+                            } else {
+                                // now depending on the type of load we extend it
+                                ret_val = match a {
+                                    0 => {
+                                        trap = TrapReason::IllegalInstruction;
+                                        break 'cycle_block;
+                                    },
+                                    1 => {
+                                        trap = TrapReason::IllegalInstruction;
+                                        break 'cycle_block;
+                                    },
+                                    2 => operand,
+                                    4 => zero_extend_8(operand),
+                                    5 => zero_extend_16(operand),
+                                    _ => unsafe {unreachable_unchecked()}
+                                };
+                            }
+
                         },
                         _ => {
                             trap = TrapReason::IllegalInstruction;
@@ -596,7 +622,7 @@ impl RiscV32State {
                         a @ 0 | a @ 1 | a @ 2 => {
                             let store_length = 1 << a;
                             // memory handles the write in full, whether it's aligned or not, or whatever
-                            mem_write(
+                            mem_write::<_, _, { Config::SUPPORT_LOAD_LESS_THAN_WORD }>(
                                 memory_source, tracer, operand_phys_address, rs2, store_length,
                                 proc_cycle, cycle_timestamp, &mut trap
                             );
@@ -633,19 +659,40 @@ impl RiscV32State {
                         // RV32M - multiplication subset
                         ret_val = match funct3 {
                             0 => { (operand_1 as i32).wrapping_mul(operand_2 as i32) as u32}, // signed MUL
-                            1 => { (((operand_1 as i32) as i64).wrapping_mul((operand_2 as i32) as i64) >> 32) as u32}, // MULH
-                            2 => { (((operand_1 as i32) as i64).wrapping_mul(((operand_2 as u32) as u64) as i64) >> 32) as u32}, // MULHSU
+                            1 => {
+                                // MULH
+                                if Config::SUPPORT_SIGNED_MUL {
+                                    (((operand_1 as i32) as i64).wrapping_mul((operand_2 as i32) as i64) >> 32) as u32
+                                } else {
+                                    trap = TrapReason::IllegalInstruction;
+                                    break 'cycle_block;
+                                }
+                            },
+                            2 => {
+                                // MULHSU
+                                if Config::SUPPORT_SIGNED_MUL {
+                                    (((operand_1 as i32) as i64).wrapping_mul(((operand_2 as u32) as u64) as i64) >> 32) as u32
+                                } else {
+                                    trap = TrapReason::IllegalInstruction;
+                                    break 'cycle_block;
+                                }
+                            },
                             3 => { ((operand_1 as u64).wrapping_mul(operand_2 as u64) >> 32) as u32}, // MULHU
                             4 => {
                                 // DIV
-                                if operand_2 == 0 {
-                                    -1i32 as u32
-                                } else {
-                                    if operand_1 as i32 == i32::MIN && operand_2 as i32 == -1 {
-                                        operand_1
+                                if Config::SUPPORT_SIGNED_DIV {
+                                    if operand_2 == 0 {
+                                        -1i32 as u32
                                     } else {
-                                        ((operand_1 as i32) / (operand_2 as i32)) as u32
+                                        if operand_1 as i32 == i32::MIN && operand_2 as i32 == -1 {
+                                            operand_1
+                                        } else {
+                                            ((operand_1 as i32) / (operand_2 as i32)) as u32
+                                        }
                                     }
+                                } else {
+                                    trap = TrapReason::IllegalInstruction;
+                                    break 'cycle_block;
                                 }
                             },
                             5 => {
@@ -658,14 +705,19 @@ impl RiscV32State {
                             },
                             6 => {
                                 // REM
-                                if operand_2 == 0 {
-                                    operand_1
-                                } else {
-                                    if operand_1 as i32 == i32::MIN && operand_2 as i32 == -1 {
-                                        0u32
+                                if Config::SUPPORT_SIGNED_DIV {
+                                    if operand_2 == 0 {
+                                        operand_1
                                     } else {
-                                        ((operand_1 as i32) % (operand_2 as i32)) as u32
+                                        if operand_1 as i32 == i32::MIN && operand_2 as i32 == -1 {
+                                            0u32
+                                        } else {
+                                            ((operand_1 as i32) % (operand_2 as i32)) as u32
+                                        }
                                     }
+                                } else {
+                                    trap = TrapReason::IllegalInstruction;
+                                    break 'cycle_block;
                                 }
                             },
                             7 => {
@@ -674,21 +726,6 @@ impl RiscV32State {
                                     operand_1
                                 } else {
                                     operand_1 % operand_2
-                                }
-                            },
-                            _ => unsafe {
-                                unreachable_unchecked()
-                            },
-                        };
-                    } else if is_r_type && funct7 == 0b0000101 {
-                        // max/min
-                        ret_val = match funct3 {
-                            5 => {
-                                // MINU
-                                if operand_1 < operand_2 {
-                                    operand_1
-                                } else {
-                                    operand_2
                                 }
                             },
                             _ => unsafe {
@@ -710,7 +747,12 @@ impl RiscV32State {
                             },
                             1 => {
                                 if instr & ROTATE_MASK != 0 {
-                                    operand_1.rotate_left(operand_2 & 0x1f)
+                                    if Config::SUPPORT_ROT {
+                                        operand_1.rotate_left(operand_2 & 0x1f)
+                                    } else {
+                                        trap = TrapReason::IllegalInstruction;
+                                        break 'cycle_block;
+                                    }
                                 } else {
                                     // Shift left
                                     // shift is encoded in lowest 5 bits
@@ -731,12 +773,22 @@ impl RiscV32State {
                             },
                             5 => {
                                 if instr & ROTATE_MASK == ROTATE_MASK {
-                                    operand_1.rotate_right(operand_2 & 0x1f)
+                                    if Config::SUPPORT_ROT {
+                                        operand_1.rotate_right(operand_2 & 0x1f)
+                                    } else {
+                                        trap = TrapReason::IllegalInstruction;
+                                        break 'cycle_block;
+                                    }
                                 } else {
                                     // Arithmetic shift right
                                     // shift is encoded in lowest 5 bits
                                     if instr & ARITHMETIC_SHIFT_RIGHT_TEST_MASK != 0 {
-                                        ((operand_1 as i32) >> (operand_2 & 0x1f)) as u32
+                                        if Config::SUPPORT_SRA {
+                                            ((operand_1 as i32) >> (operand_2 & 0x1f)) as u32
+                                        } else {
+                                            trap = TrapReason::IllegalInstruction;
+                                            break 'cycle_block;
+                                        }
                                     } else {
                                         operand_1  >> (operand_2 & 0x1f)
                                     }
@@ -956,27 +1008,31 @@ impl RiscV32State {
                         const MOP_FUNCT7_TEST: u32 = 0b1000001u32;
                         let funct7 = RTypeOpcode::funct7(instr);
                         if funct7 & MOP_FUNCT7_TEST == MOP_FUNCT7_TEST {
-                            let mop_number = ((funct7 & 0b110) >> 1) | ((funct7 & 0b100000) >> 5);
-                            const MODULUS_U32: u32 = 0x7fffffffu32;
-                            const MODULUS_U64: u64 = 0x7fffffffu64;
-                            let operand_1 = rs1;
-                            let operand_2 = rs2;
-                            match mop_number {
-                                0 => {
-                                    ret_val = operand_1.wrapping_add(operand_2) % MODULUS_U32;
-                                },
-                                1 => {
-                                    ret_val = MODULUS_U32.wrapping_add(operand_1).wrapping_sub(operand_2) % MODULUS_U32;
-                                },
-                                2 => {
-                                    ret_val = (((operand_1 as u64) * (operand_2 as u64)) % MODULUS_U64) as u32;
+                            if Config::SUPPORT_MOPS {
+                                let mop_number = ((funct7 & 0b110) >> 1) | ((funct7 & 0b100000) >> 5);
+                                const MODULUS_U32: u32 = 0x7fffffffu32;
+                                const MODULUS_U64: u64 = 0x7fffffffu64;
+                                let operand_1 = rs1;
+                                let operand_2 = rs2;
+                                match mop_number {
+                                    0 => {
+                                        ret_val = operand_1.wrapping_add(operand_2) % MODULUS_U32;
+                                    },
+                                    1 => {
+                                        ret_val = MODULUS_U32.wrapping_add(operand_1).wrapping_sub(operand_2) % MODULUS_U32;
+                                    },
+                                    2 => {
+                                        ret_val = (((operand_1 as u64) * (operand_2 as u64)) % MODULUS_U64) as u32;
+                                    }
+                                    _ => {
+                                        trap = TrapReason::IllegalInstruction;
+                                        break 'cycle_block;
+                                    }
                                 }
-                                _ => {
-                                    trap = TrapReason::IllegalInstruction;
-                                    break 'cycle_block;
-                                }
+                            } else {
+                                trap = TrapReason::IllegalInstruction;
+                                break 'cycle_block;
                             }
-
                         } else {
                             trap = TrapReason::IllegalInstruction;
                             break 'cycle_block;

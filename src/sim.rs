@@ -296,7 +296,7 @@ mod diag {
                     break;
                 }
 
-                let addr = mem_read(
+                let addr = mem_read::<_, _, false>(
                     memory_source,
                     memory_tracer,
                     fpp - 4,
@@ -307,7 +307,7 @@ mod diag {
                     &mut trap,
                 );
 
-                let next = mem_read(
+                let next = mem_read::<_, _, false>(
                     memory_source,
                     memory_tracer,
                     fpp - 8,

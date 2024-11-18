@@ -229,7 +229,7 @@ impl<M: MemorySource, TR: Tracer> MMUImplementation<M, TR> for SimpleMMU {
 
             for _j in 0..SV32_LEVELS {
                 let pte_addr = a.wrapping_add(vpns[i as usize]);
-                let pte_value = mem_read(
+                let pte_value = mem_read::<_, _, false>(
                     memory_source,
                     tracer,
                     pte_addr as u64,
