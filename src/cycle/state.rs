@@ -317,7 +317,7 @@ where
     ) {
         #[cfg(not(feature = "delegation"))]
         {
-            use crate::cycle::state::csr_processor::NoExtraCSRs;
+            use crate::abstractions::csr_processor::NoExtraCSRs;
             self.cycle_ext(
                 memory_source,
                 tracer,
