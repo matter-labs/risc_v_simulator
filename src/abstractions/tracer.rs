@@ -6,19 +6,16 @@ pub enum BatchAccessPartialData {
     Write { read_value: u32, written_value: u32 },
 }
 
-pub trait Tracer {
+pub trait Tracer<C: MachineConfig> {
     type AuxData;
 
-    fn create_from_initial_state<C: MachineConfig>(
-        state: &RiscV32State<C>,
-        aux_data: Self::AuxData,
-    ) -> Self;
+    fn create_from_initial_state(state: &RiscV32State<C>, aux_data: Self::AuxData) -> Self;
 
     #[inline(always)]
-    fn at_cycle_start<C: MachineConfig>(&mut self, _current_state: &RiscV32State<C>) {}
+    fn at_cycle_start(&mut self, _current_state: &RiscV32State<C>) {}
 
     #[inline(always)]
-    fn at_cycle_end<C: MachineConfig>(&mut self, _current_state: &RiscV32State<C>) {}
+    fn at_cycle_end(&mut self, _current_state: &RiscV32State<C>) {}
 
     #[inline(always)]
     fn trace_opcode_read(
@@ -123,13 +120,10 @@ pub trait Tracer {
     }
 }
 
-impl Tracer for () {
+impl<C: MachineConfig> Tracer<C> for () {
     type AuxData = ();
 
-    fn create_from_initial_state<C: MachineConfig>(
-        _state: &RiscV32State<C>,
-        _aux_data: Self::AuxData,
-    ) -> Self {
+    fn create_from_initial_state(_state: &RiscV32State<C>, _aux_data: Self::AuxData) -> Self {
         ()
     }
 }

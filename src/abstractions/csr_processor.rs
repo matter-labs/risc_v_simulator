@@ -6,7 +6,12 @@ use crate::mmu::MMUImplementation;
 
 pub trait CustomCSRProcessor: 'static + Clone + Debug {
     // we are only interested in CSRs that are NOT in out basic list
-    fn process_read<M: MemorySource, TR: Tracer, MMU: MMUImplementation<M, TR>>(
+    fn process_read<
+        M: MemorySource,
+        TR: Tracer<C>,
+        MMU: MMUImplementation<M, TR, C>,
+        C: MachineConfig,
+    >(
         &mut self,
         memory_source: &mut M,
         tracer: &mut TR,
@@ -19,7 +24,12 @@ pub trait CustomCSRProcessor: 'static + Clone + Debug {
         proc_cycle: u32,
         cycle_timestamp: u32,
     );
-    fn process_write<M: MemorySource, TR: Tracer, MMU: MMUImplementation<M, TR>>(
+    fn process_write<
+        M: MemorySource,
+        TR: Tracer<C>,
+        MMU: MMUImplementation<M, TR, C>,
+        C: MachineConfig,
+    >(
         &mut self,
         memory_source: &mut M,
         tracer: &mut TR,
@@ -38,7 +48,12 @@ pub struct NoExtraCSRs;
 
 impl CustomCSRProcessor for NoExtraCSRs {
     #[inline(always)]
-    fn process_read<M: MemorySource, TR: Tracer, MMU: MMUImplementation<M, TR>>(
+    fn process_read<
+        M: MemorySource,
+        TR: Tracer<C>,
+        MMU: MMUImplementation<M, TR, C>,
+        C: MachineConfig,
+    >(
         &mut self,
         _memory_source: &mut M,
         _tracer: &mut TR,
@@ -55,7 +70,12 @@ impl CustomCSRProcessor for NoExtraCSRs {
     }
 
     #[inline(always)]
-    fn process_write<M: MemorySource, TR: Tracer, MMU: MMUImplementation<M, TR>>(
+    fn process_write<
+        M: MemorySource,
+        TR: Tracer<C>,
+        MMU: MMUImplementation<M, TR, C>,
+        C: MachineConfig,
+    >(
         &mut self,
         _memory_source: &mut M,
         _tracer: &mut TR,

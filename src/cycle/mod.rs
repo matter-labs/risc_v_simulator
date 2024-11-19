@@ -4,7 +4,7 @@ pub mod opcode_formats;
 pub mod state;
 pub mod status_registers;
 
-pub trait MachineConfig: 'static + Clone + Copy + Hash + std::fmt::Debug {
+pub trait MachineConfig: 'static + Clone + Copy + Hash + std::fmt::Debug + PartialEq + Eq {
     const SUPPORT_SIGNED_MUL: bool;
     const SUPPORT_SIGNED_DIV: bool;
     const SUPPORT_SIGNED_LOAD: bool;
@@ -14,7 +14,7 @@ pub trait MachineConfig: 'static + Clone + Copy + Hash + std::fmt::Debug {
     const SUPPORT_MOPS: bool;
 }
 
-#[derive(Clone, Copy, Debug, Hash)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct IMStandardIsaConfig;
 
 impl MachineConfig for IMStandardIsaConfig {
@@ -27,7 +27,7 @@ impl MachineConfig for IMStandardIsaConfig {
     const SUPPORT_MOPS: bool = false;
 }
 
-#[derive(Clone, Copy, Debug, Hash)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct ReducedIMIsaConfig;
 
 impl MachineConfig for ReducedIMIsaConfig {

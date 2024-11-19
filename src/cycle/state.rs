@@ -119,23 +119,23 @@ impl ExtraFlags {
 }
 
 #[derive(Clone, Debug)]
-pub struct StateTracer {
-    tracer: Vec<RiscV32State>,
+pub struct StateTracer<C: MachineConfig = IMStandardIsaConfig> {
+    tracer: Vec<RiscV32State<C>>,
 }
 
-impl StateTracer {
+impl<C: MachineConfig> StateTracer<C> {
     pub fn new_for_num_cycles(num_cycles: usize) -> Self {
         Self {
             tracer: Vec::with_capacity(num_cycles + 1),
         }
     }
 
-    pub fn insert(&mut self, idx: usize, state: RiscV32State) {
+    pub fn insert(&mut self, idx: usize, state: RiscV32State<C>) {
         assert_eq!(self.tracer.len(), idx, "trying to insert out of order");
         self.tracer.push(state);
     }
 
-    pub fn get(&self, idx: usize) -> Option<&RiscV32State> {
+    pub fn get(&self, idx: usize) -> Option<&RiscV32State<C>> {
         self.tracer.get(idx)
     }
 }
@@ -257,7 +257,7 @@ where
 
     #[must_use]
     #[inline(always)]
-    pub fn get_first_register<TR: Tracer>(
+    pub fn get_first_register<TR: Tracer<Config>>(
         &self,
         reg_idx: u32,
         proc_cycle: u32,
@@ -272,7 +272,7 @@ where
 
     #[must_use]
     #[inline(always)]
-    pub fn get_second_register<TR: Tracer>(
+    pub fn get_second_register<TR: Tracer<Config>>(
         &self,
         reg_idx: u32,
         proc_cycle: u32,
@@ -286,7 +286,7 @@ where
     }
 
     #[inline(always)]
-    pub fn set_register<TR: Tracer>(
+    pub fn set_register<TR: Tracer<Config>>(
         &mut self,
         reg_idx: u32,
         value: u32,
@@ -304,9 +304,9 @@ where
     pub fn cycle<
         'a,
         M: MemorySource,
-        TR: Tracer,
+        TR: Tracer<Config>,
         ND: NonDeterminismCSRSource<M>,
-        MMU: MMUImplementation<M, TR>,
+        MMU: MMUImplementation<M, TR, Config>,
     >(
         &'a mut self,
         memory_source: &'a mut M,
@@ -346,9 +346,9 @@ where
     pub fn cycle_ext<
         'a,
         M: MemorySource,
-        TR: Tracer,
+        TR: Tracer<Config>,
         ND: NonDeterminismCSRSource<M>,
-        MMU: MMUImplementation<M, TR>,
+        MMU: MMUImplementation<M, TR, Config>,
         CSR: CustomCSRProcessor,
     >(
         &'a mut self,
@@ -392,7 +392,7 @@ where
                 break 'cycle_block;
             }
 
-            instr = mem_read::<_, _, false>(
+            instr = mem_read::<_, _, _, false>(
                 memory_source,
                 tracer,
                 instruction_phys_address,
@@ -549,7 +549,7 @@ where
                             // Memory implementation should handle read in full. For now we only use one
                             // that doesn't step over 4 byte boundary ever, meaning even though formal address is not 4 byte aligned,
                             // loads of u8/u16/u32 are still "aligned"
-                            let operand = mem_read::<_, _, { Config::SUPPORT_LOAD_LESS_THAN_WORD } >(
+                            let operand = mem_read::<_, _, _, { Config::SUPPORT_LOAD_LESS_THAN_WORD } >(
                                 memory_source, tracer, operand_phys_address,
                                 num_bytes, AccessType::MemLoad, proc_cycle, cycle_timestamp, &mut trap
                             );
@@ -622,7 +622,7 @@ where
                         a @ 0 | a @ 1 | a @ 2 => {
                             let store_length = 1 << a;
                             // memory handles the write in full, whether it's aligned or not, or whatever
-                            mem_write::<_, _, { Config::SUPPORT_LOAD_LESS_THAN_WORD }>(
+                            mem_write::<_, _, _, { Config::SUPPORT_LOAD_LESS_THAN_WORD }>(
                                 memory_source, tracer, operand_phys_address, rs2, store_length,
                                 proc_cycle, cycle_timestamp, &mut trap
                             );

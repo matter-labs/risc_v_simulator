@@ -15,8 +15,9 @@ pub const BLAKE2S_ACCESS_ID: u32 = NON_DETERMINISM_CSR + 1;
 
 pub fn blake2s_round_function<
     M: MemorySource,
-    TR: Tracer,
-    MMU: MMUImplementation<M, TR>,
+    TR: Tracer<C>,
+    MMU: MMUImplementation<M, TR, C>,
+    C: MachineConfig,
     const REDUCED_ROUNDS: bool,
 >(
     memory_source: &mut M,

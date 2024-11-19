@@ -3,9 +3,10 @@ use crate::abstractions::memory::{AccessType, MemorySource};
 use crate::abstractions::tracer::Tracer;
 use crate::cycle::state::Mode;
 use crate::cycle::status_registers::{SATPRegister, TrapReason};
+use crate::cycle::MachineConfig;
 use crate::utils::*;
 
-pub trait MMUImplementation<M: MemorySource, TR: Tracer> {
+pub trait MMUImplementation<M: MemorySource, TR: Tracer<C>, C: MachineConfig> {
     fn read_sapt(&mut self, mode: Mode, trap: &mut TrapReason) -> u32;
     fn write_sapt(&mut self, value: u32, mode: Mode, trap: &mut TrapReason);
     fn map_virtual_to_physical(
@@ -153,7 +154,7 @@ pub struct NoMMU {
     pub sapt: u32,
 }
 
-impl<M: MemorySource, TR: Tracer> MMUImplementation<M, TR> for NoMMU {
+impl<M: MemorySource, TR: Tracer<C>, C: MachineConfig> MMUImplementation<M, TR, C> for NoMMU {
     #[must_use]
     #[inline(always)]
     fn read_sapt(&mut self, _mode: Mode, _trap: &mut TrapReason) -> u32 {
@@ -186,7 +187,7 @@ pub struct SimpleMMU {
     pub sapt: u32,
 }
 
-impl<M: MemorySource, TR: Tracer> MMUImplementation<M, TR> for SimpleMMU {
+impl<M: MemorySource, TR: Tracer<C>, C: MachineConfig> MMUImplementation<M, TR, C> for SimpleMMU {
     #[must_use]
     #[inline(always)]
     fn read_sapt(&mut self, _mode: Mode, _trap: &mut TrapReason) -> u32 {
@@ -229,7 +230,7 @@ impl<M: MemorySource, TR: Tracer> MMUImplementation<M, TR> for SimpleMMU {
 
             for _j in 0..SV32_LEVELS {
                 let pte_addr = a.wrapping_add(vpns[i as usize]);
-                let pte_value = mem_read::<_, _, false>(
+                let pte_value = mem_read::<_, _, _, false>(
                     memory_source,
                     tracer,
                     pte_addr as u64,

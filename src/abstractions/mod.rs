@@ -1,6 +1,7 @@
 use self::memory::MemorySource;
 use crate::abstractions::memory::AccessType;
 use crate::cycle::status_registers::TrapReason;
+use crate::cycle::MachineConfig;
 use std::hint::unreachable_unchecked;
 use tracer::Tracer;
 
@@ -11,7 +12,12 @@ pub mod tracer;
 
 #[must_use]
 #[inline(always)]
-pub fn mem_read<M: MemorySource, TR: Tracer, const SUPPORT_LOAD_LESS_THAN_WORD: bool>(
+pub fn mem_read<
+    M: MemorySource,
+    TR: Tracer<C>,
+    C: MachineConfig,
+    const SUPPORT_LOAD_LESS_THAN_WORD: bool,
+>(
     memory_source: &mut M,
     tracer: &mut TR,
     phys_address: u64,
@@ -79,7 +85,12 @@ pub fn mem_read<M: MemorySource, TR: Tracer, const SUPPORT_LOAD_LESS_THAN_WORD: 
 }
 
 #[inline(always)]
-pub fn mem_write<M: MemorySource, TR: Tracer, const SUPPORT_LOAD_LESS_THAN_WORD: bool>(
+pub fn mem_write<
+    M: MemorySource,
+    TR: Tracer<C>,
+    C: MachineConfig,
+    const SUPPORT_LOAD_LESS_THAN_WORD: bool,
+>(
     memory_source: &mut M,
     tracer: &mut TR,
     phys_address: u64,

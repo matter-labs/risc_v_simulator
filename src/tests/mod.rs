@@ -1,3 +1,4 @@
+use crate::cycle::IMStandardIsaConfig;
 use crate::{
     abstractions::{memory::VectorMemoryImpl, non_determinism::ZeroedSource},
     cycle::state::RiscV32State,
@@ -19,7 +20,7 @@ mod sra;
 const INITIAL_PC: u32 = 0;
 
 fn test_reg_reg_op(op_name: &str, expected: u32, op1: u32, op2: u32) {
-    let mut state = RiscV32State::initial(INITIAL_PC);
+    let mut state = RiscV32State::<IMStandardIsaConfig>::initial(INITIAL_PC);
     state.registers[1] = op1;
     state.registers[2] = op2;
     let instr = format!("{} x3, x1, x2", op_name);
@@ -41,7 +42,7 @@ fn test_reg_reg_op(op_name: &str, expected: u32, op1: u32, op2: u32) {
 }
 
 fn test_reg_imm_op(op_name: &str, expected: u32, op1: u32, imm: u16) {
-    let mut state = RiscV32State::initial(INITIAL_PC);
+    let mut state = RiscV32State::<IMStandardIsaConfig>::initial(INITIAL_PC);
     state.registers[1] = op1;
     let instr = format!("{} x3, x1, 0x{:x}", op_name, imm);
     let mut empty_hash: HashMap<String, u32> = HashMap::new();
@@ -62,7 +63,7 @@ fn test_reg_imm_op(op_name: &str, expected: u32, op1: u32, imm: u16) {
 }
 
 fn test_branch_op<const TAKEN: bool>(op_name: &str, op1: u32, op2: u32) {
-    let mut state = RiscV32State::initial(INITIAL_PC);
+    let mut state = RiscV32State::<IMStandardIsaConfig>::initial(INITIAL_PC);
     state.registers[1] = op1;
     state.registers[2] = op2;
     let instr = format!("{} x1, x2, 0x08", op_name);

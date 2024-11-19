@@ -4,15 +4,16 @@ use blake2s_u32::{mixing_function, IV, SIGMAS};
 use super::*;
 
 // blake2 round function binary interface is
-// - 16xu32 words of the extended state (including all necessary control words)
+// - 8xu32 initial state to be output of the final round, and input of the first round
+// - 16xu32 words of the extended state scratch space. Control registers will be taken from there
 // - 16x32 words of the input data to mix in
 // - one u32 bitmask, that will determine a permutation
-// at the end we will overwrite first 16 words as the result
+// - one boolean flag that will tell to xor-out into first 8 words
 
-pub const BLAKE2_ROUND_FUNCTION_ABI_NUM_MEM_ACCESSES: usize = 16 + 16 + 1;
-pub const BLAKE2_ROUND_FUNCTION_ACCESS_ID: u32 = NON_DETERMINISM_CSR + 2;
+pub const BLAKE2_ROUND_FUNCTION_ABI_NUM_MEM_ACCESSES: usize = 8 + 16 + 16 + 1 + 1;
+pub const BLAKE2_ROUND_FUNCTION_WITH_XOR_ACCESS_ID: u32 = NON_DETERMINISM_CSR + 3;
 
-pub fn blake2_round_function<
+pub fn blake2_round_function_with_xor<
     M: MemorySource,
     TR: Tracer<C>,
     MMU: MMUImplementation<M, TR, C>,
@@ -35,8 +36,8 @@ pub fn blake2_round_function<
         BLAKE2_ROUND_FUNCTION_ABI_NUM_MEM_ACCESSES];
     let mut it = accesses.iter_mut();
 
-    let mut extended_state = [0u32; 16];
-    for low_offset in 0..16 {
+    let mut initial_state = [0u32; 8];
+    for (low_offset, dst) in (0..8).zip(initial_state.iter_mut()) {
         let address: usize = mem_offset + low_offset * core::mem::size_of::<u32>();
         let read_value = memory_source.get(address as u64, AccessType::RegWrite, trap);
         if trap.is_a_trap() {
@@ -47,11 +48,26 @@ pub fn blake2_round_function<
             read_value: read_value,
             written_value: 0,
         };
-        extended_state[low_offset as usize] = read_value;
+        *dst = read_value;
+    }
+
+    let mut extended_state = [0u32; 16];
+    for (low_offset, dst) in (8..24usize).zip(extended_state.iter_mut()) {
+        let address: usize = mem_offset + low_offset * core::mem::size_of::<u32>();
+        let read_value = memory_source.get(address as u64, AccessType::RegWrite, trap);
+        if trap.is_a_trap() {
+            panic!("error in blake2s memory access");
+        }
+
+        *it.next().unwrap() = BatchAccessPartialData::Write {
+            read_value: read_value,
+            written_value: 0,
+        };
+        *dst = read_value;
     }
 
     let mut message_block = [0u32; 16];
-    for (low_offset, dst) in (16..32usize).zip(message_block.iter_mut()) {
+    for (low_offset, dst) in (24..40usize).zip(message_block.iter_mut()) {
         let address: usize = mem_offset + low_offset * core::mem::size_of::<u32>();
         let read_value = memory_source.get(address as u64, AccessType::RegWrite, trap);
         if trap.is_a_trap() {
@@ -63,19 +79,38 @@ pub fn blake2_round_function<
     }
 
     // bitmask controlling the permutation
-    let address: usize = mem_offset + 32 * core::mem::size_of::<u32>();
+    let address: usize = mem_offset + 40 * core::mem::size_of::<u32>();
     let read_value = memory_source.get(address as u64, AccessType::RegWrite, trap);
     if trap.is_a_trap() {
         panic!("error in blake2s memory access");
     }
-
     *it.next().unwrap() = BatchAccessPartialData::Read { read_value };
     let permutation_bitmask = read_value;
     assert!(permutation_bitmask.is_power_of_two());
+    // bit to control final output
+    let address: usize = mem_offset + 41 * core::mem::size_of::<u32>();
+    let read_value = memory_source.get(address as u64, AccessType::RegWrite, trap);
+    if trap.is_a_trap() {
+        panic!("error in blake2s memory access");
+    }
+    *it.next().unwrap() = BatchAccessPartialData::Read { read_value };
+    let flush_bit = read_value;
+    assert!(flush_bit == 0 || flush_bit == 1);
+
     let permutation_index = permutation_bitmask.trailing_zeros() as usize;
 
     if permutation_index == 0 {
-        // overwrite elements 8-11, 13, 15
+        // we take values from the initial state, and put them into 0..8 range
+        extended_state[0] = initial_state[0];
+        extended_state[1] = initial_state[1];
+        extended_state[2] = initial_state[2];
+        extended_state[3] = initial_state[3];
+        extended_state[4] = initial_state[4];
+        extended_state[5] = initial_state[5];
+        extended_state[6] = initial_state[6];
+        extended_state[7] = initial_state[7];
+
+        // and then overwrite elements 8-11, 13, 15 to initial values
         extended_state[8] = IV[0];
         extended_state[9] = IV[1];
         extended_state[10] = IV[2];
@@ -88,11 +123,40 @@ pub fn blake2_round_function<
     let sigma = &SIGMAS[permutation_index];
     mixing_function(&mut extended_state, &message_block, sigma);
 
+    if flush_bit == 1 {
+        assert!(permutation_index == 6 || permutation_index == 9, "expected to support only 7 or 10 round invocaitons, but got a request to flush after {} rounds", permutation_index + 1);
+        // xor it and write into first 8 elements
+        for i in 0..8 {
+            initial_state[i] ^= extended_state[i];
+            initial_state[i] ^= extended_state[i + 8];
+        }
+    }
+
     // write back
-    for (low_offset, (access, value)) in accesses
+    for ((access, value), low_offset) in
+        accesses.iter_mut().zip(initial_state.into_iter()).zip(0..8)
+    {
+        let BatchAccessPartialData::Write {
+            read_value: _,
+            written_value,
+        } = access
+        else {
+            unreachable!()
+        };
+
+        *written_value = value;
+        let address: usize = mem_offset + low_offset * core::mem::size_of::<u32>();
+        memory_source.set(address as u64, value, AccessType::RegWrite, trap);
+        if trap.is_a_trap() {
+            panic!("error in blake2s memory access");
+        }
+    }
+
+    // write back
+    for ((access, value), low_offset) in accesses[8..]
         .iter_mut()
         .zip(extended_state.into_iter())
-        .enumerate()
+        .zip(8..24)
     {
         let BatchAccessPartialData::Write {
             read_value: _,
@@ -111,7 +175,7 @@ pub fn blake2_round_function<
     }
 
     tracer.trace_batch_memory_access(
-        BLAKE2_ROUND_FUNCTION_ACCESS_ID,
+        BLAKE2_ROUND_FUNCTION_WITH_XOR_ACCESS_ID,
         (mem_offset >> 16) as u16,
         &accesses,
         proc_cycle,
