@@ -852,109 +852,204 @@ where
                         }
                         let rs1_as_imm = ITypeOpcode::rs1(instr);
 
-                        // read
-                        match csr_number {
-                            0x180 => {
-                                // satp
-                                ret_val = mmu.read_sapt(current_privilege_mode, &mut trap);
-                                if trap.is_a_trap() {
-                                    break 'cycle_block;
-                                }
-                            },
-                            0x300 => ret_val = self.machine_mode_trap_data.state.status, // mstatus
-                            //0x301 => ret_val = 0b01_00_0000_0001_0000_0001_0001_0000_0000u32, //misa (I + M + usemode)
-                            0x304 => ret_val = self.machine_mode_trap_data.state.ie, // mie
-                            0x305 => ret_val = self.machine_mode_trap_data.setup.tvec, // mtvec
-                            0x340 => ret_val = self.machine_mode_trap_data.handling.scratch, // mscratch
-                            0x341 => ret_val = self.machine_mode_trap_data.handling.epc, // mepc
-                            0x342 => ret_val = self.machine_mode_trap_data.handling.cause, // mcause
-                            0x343 => ret_val = self.machine_mode_trap_data.handling.tval, // mtval
-                            0x344 => ret_val = self.machine_mode_trap_data.state.ip, // mip
-                            //0xc00 => ret_val = self.cycle_counter as u32, // cycle
-                            //0xf11 => ret_val = 0, // vendor ID, will come up later on,
-                            NON_DETERMINISM_CSR => {
-                                // to imporve oracle usability we can try to avoid read
-                                // if we intend to write, so check oracle config
-                                ret_val = if ND::SHOULD_MOCK_READS_BEFORE_WRITES {
-                                    // all our oracle accesses are implemented via CSRRW
-                                    // with either rd == 0 or rs1 == 0, so if we have
-                                    // rd == 0 here it's just a read
-                                    if rd == 0
-                                    {
-                                        // we consider main intention to be write into CSR,
-                                        // so do NOT perform `read()`
-                                        0
+                        if Config::SUPPORT_STANDARD_CSRS == false {
+                            // read
+                            match csr_number {
+                                NON_DETERMINISM_CSR => {
+                                    // to imporve oracle usability we can try to avoid read
+                                    // if we intend to write, so check oracle config
+                                    ret_val = if ND::SHOULD_MOCK_READS_BEFORE_WRITES {
+                                        // all our oracle accesses are implemented via CSRRW
+                                        // with either rd == 0 or rs1 == 0, so if we have
+                                        // rd == 0 here it's just a read
+                                        if rd == 0
+                                        {
+                                            // we consider main intention to be write into CSR,
+                                            // so do NOT perform `read()`
+                                            0
+                                        } else {
+                                            // it's actually intended to read
+                                            non_determinism_source.read()
+                                        }
                                     } else {
-                                        // it's actually intended to read
                                         non_determinism_source.read()
+                                    };
+                                    tracer.trace_non_determinism_read(ret_val, proc_cycle, cycle_timestamp);
+                                }
+                                _ => {
+                                    println!("Custom CSR = 0x{:04x} READ at cycle {}", csr_number, proc_cycle);
+                                    csr_processor.process_read(memory_source, tracer, mmu, csr_number, rs1, rs1_as_imm, &mut ret_val, &mut trap, proc_cycle, cycle_timestamp);
+                                    if trap.is_a_trap() {
+                                        break 'cycle_block;
                                     }
-                                } else {
-                                    non_determinism_source.read()
-                                };
-                                tracer.trace_non_determinism_read(ret_val, proc_cycle, cycle_timestamp);
-                            }
-                            _ => {
-                                println!("Custom CSR = 0x{:04x} READ at cycle {}", csr_number, proc_cycle);
-                                csr_processor.process_read(memory_source, tracer, mmu, csr_number, rs1, rs1_as_imm, &mut ret_val, &mut trap, proc_cycle, cycle_timestamp);
-                                if trap.is_a_trap() {
-                                    break 'cycle_block;
                                 }
                             }
-                        }
 
-                        let mut write_val = 0;
-
-                        // update
-                        match funct3 {
-                            1 => write_val = rs1, //CSRRW
-                            2 => write_val = ret_val | rs1, //CSRRS
-                            3 => write_val = ret_val & !rs1, //CSRRC
-                            5 => write_val = rs1_as_imm, //CSRRWI
-                            6 => write_val = ret_val | rs1_as_imm, //CSRRSI
-                            7 => write_val = ret_val & !rs1_as_imm, //CSRRCI
-                            _ => {}
-                        }
-
-                        match csr_number {
-                            0x180 => {
-                                // satp
-                                mmu.write_sapt(write_val, current_privilege_mode, &mut trap);
-                                if trap.is_a_trap() {
-                                    break 'cycle_block;
+                            let write_val;
+                            // update
+                            if Config::SUPPORT_ONLY_CSRRW == false {
+                                match funct3 {
+                                    1 => write_val = rs1, //CSRRW
+                                    2 => write_val = ret_val | rs1, //CSRRS
+                                    3 => write_val = ret_val & !rs1, //CSRRC
+                                    5 => write_val = rs1_as_imm, //CSRRWI
+                                    6 => write_val = ret_val | rs1_as_imm, //CSRRSI
+                                    7 => write_val = ret_val & !rs1_as_imm, //CSRRCI
+                                    _ => {
+                                        trap = TrapReason::IllegalInstruction;
+                                        break 'cycle_block;
+                                    }
                                 }
-                            },
-                            0x300 => self.machine_mode_trap_data.state.status = write_val, // mstatus
-                            0x304 => self.machine_mode_trap_data.state.ie = write_val, // mie
-                            0x305 => self.machine_mode_trap_data.setup.tvec = write_val, // mtvec
-                            0x340 => self.machine_mode_trap_data.handling.scratch = write_val, // mscratch
-                            0x341 => self.machine_mode_trap_data.handling.epc = write_val, // mepc
-                            0x342 => self.machine_mode_trap_data.handling.cause = write_val, // mcause
-                            0x343 => self.machine_mode_trap_data.handling.tval = write_val, // mtval
-                            0x344 => self.machine_mode_trap_data.state.ip = write_val, // mip
-                            NON_DETERMINISM_CSR => {
-                                if ND::SHOULD_IGNORE_WRITES_AFTER_READS {
-                                    // if we have rs1 == 0 then we should ignore write into CSR,
-                                    // as our main intension was to read
-                                    if rs1_as_imm == 0 // index of rs1
-                                    {
-                                        // do nothing
+                            } else {
+                                match funct3 {
+                                    1 => write_val = rs1, //CSRRW
+                                    _ => {
+                                        trap = TrapReason::IllegalInstruction;
+                                        break 'cycle_block;
+                                    }
+                                }
+                            }
+
+                            match csr_number {
+                                NON_DETERMINISM_CSR => {
+                                    if ND::SHOULD_IGNORE_WRITES_AFTER_READS {
+                                        // if we have rs1 == 0 then we should ignore write into CSR,
+                                        // as our main intension was to read
+                                        if rs1_as_imm == 0 // index of rs1
+                                        {
+                                            // do nothing
+                                        } else {
+                                            non_determinism_source.write_with_memory_access(&*memory_source, write_val);
+                                        }
                                     } else {
                                         non_determinism_source.write_with_memory_access(&*memory_source, write_val);
                                     }
-                                } else {
-                                    non_determinism_source.write_with_memory_access(&*memory_source, write_val);
+                                }
+                                _ => {
+                                    let t = CSR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                                    println!("Custom CSR = 0x{:04x} WRITE at cycle {}, total: {}", csr_number, proc_cycle, t + 1);
+                                    csr_processor.process_write(memory_source, tracer, mmu, csr_number, rs1, rs1_as_imm, &mut trap, proc_cycle, cycle_timestamp);
+                                    if trap.is_a_trap() {
+                                        break 'cycle_block;
+                                    }
                                 }
                             }
-                            _ => {
-                                let t = CSR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-                                println!("Custom CSR = 0x{:04x} WRITE at cycle {}, total: {}", csr_number, proc_cycle, t + 1);
-                                csr_processor.process_write(memory_source, tracer, mmu, csr_number, rs1, rs1_as_imm, &mut trap, proc_cycle, cycle_timestamp);
-                                if trap.is_a_trap() {
-                                    break 'cycle_block;
+                        } else {
+                            // read
+                            match csr_number {
+                                0x180 => {
+                                    // satp
+                                    ret_val = mmu.read_sapt(current_privilege_mode, &mut trap);
+                                    if trap.is_a_trap() {
+                                        break 'cycle_block;
+                                    }
+                                },
+                                0x300 => ret_val = self.machine_mode_trap_data.state.status, // mstatus
+                                //0x301 => ret_val = 0b01_00_0000_0001_0000_0001_0001_0000_0000u32, //misa (I + M + usemode)
+                                0x304 => ret_val = self.machine_mode_trap_data.state.ie, // mie
+                                0x305 => ret_val = self.machine_mode_trap_data.setup.tvec, // mtvec
+                                0x340 => ret_val = self.machine_mode_trap_data.handling.scratch, // mscratch
+                                0x341 => ret_val = self.machine_mode_trap_data.handling.epc, // mepc
+                                0x342 => ret_val = self.machine_mode_trap_data.handling.cause, // mcause
+                                0x343 => ret_val = self.machine_mode_trap_data.handling.tval, // mtval
+                                0x344 => ret_val = self.machine_mode_trap_data.state.ip, // mip
+                                //0xc00 => ret_val = self.cycle_counter as u32, // cycle
+                                //0xf11 => ret_val = 0, // vendor ID, will come up later on,
+                                NON_DETERMINISM_CSR => {
+                                    // to imporve oracle usability we can try to avoid read
+                                    // if we intend to write, so check oracle config
+                                    ret_val = if ND::SHOULD_MOCK_READS_BEFORE_WRITES {
+                                        // all our oracle accesses are implemented via CSRRW
+                                        // with either rd == 0 or rs1 == 0, so if we have
+                                        // rd == 0 here it's just a read
+                                        if rd == 0
+                                        {
+                                            // we consider main intention to be write into CSR,
+                                            // so do NOT perform `read()`
+                                            0
+                                        } else {
+                                            // it's actually intended to read
+                                            non_determinism_source.read()
+                                        }
+                                    } else {
+                                        non_determinism_source.read()
+                                    };
+                                    tracer.trace_non_determinism_read(ret_val, proc_cycle, cycle_timestamp);
+                                }
+                                _ => {
+                                    println!("Custom CSR = 0x{:04x} READ at cycle {}", csr_number, proc_cycle);
+                                    csr_processor.process_read(memory_source, tracer, mmu, csr_number, rs1, rs1_as_imm, &mut ret_val, &mut trap, proc_cycle, cycle_timestamp);
+                                    if trap.is_a_trap() {
+                                        break 'cycle_block;
+                                    }
+                                }
+                            }
+
+                            let write_val;
+                            // update
+                            if Config::SUPPORT_ONLY_CSRRW == false {
+                                match funct3 {
+                                    1 => write_val = rs1, //CSRRW
+                                    2 => write_val = ret_val | rs1, //CSRRS
+                                    3 => write_val = ret_val & !rs1, //CSRRC
+                                    5 => write_val = rs1_as_imm, //CSRRWI
+                                    6 => write_val = ret_val | rs1_as_imm, //CSRRSI
+                                    7 => write_val = ret_val & !rs1_as_imm, //CSRRCI
+                                    _ => {
+                                        trap = TrapReason::IllegalInstruction;
+                                        break 'cycle_block;
+                                    }
+                                }
+                            } else {
+                                match funct3 {
+                                    1 => write_val = rs1, //CSRRW
+                                    _ => {
+                                        trap = TrapReason::IllegalInstruction;
+                                        break 'cycle_block;
+                                    }
+                                }
+                            }
+
+                            match csr_number {
+                                0x180 => {
+                                    // satp
+                                    mmu.write_sapt(write_val, current_privilege_mode, &mut trap);
+                                    if trap.is_a_trap() {
+                                        break 'cycle_block;
+                                    }
+                                },
+                                0x300 => self.machine_mode_trap_data.state.status = write_val, // mstatus
+                                0x304 => self.machine_mode_trap_data.state.ie = write_val, // mie
+                                0x305 => self.machine_mode_trap_data.setup.tvec = write_val, // mtvec
+                                0x340 => self.machine_mode_trap_data.handling.scratch = write_val, // mscratch
+                                0x341 => self.machine_mode_trap_data.handling.epc = write_val, // mepc
+                                0x342 => self.machine_mode_trap_data.handling.cause = write_val, // mcause
+                                0x343 => self.machine_mode_trap_data.handling.tval = write_val, // mtval
+                                0x344 => self.machine_mode_trap_data.state.ip = write_val, // mip
+                                NON_DETERMINISM_CSR => {
+                                    if ND::SHOULD_IGNORE_WRITES_AFTER_READS {
+                                        // if we have rs1 == 0 then we should ignore write into CSR,
+                                        // as our main intension was to read
+                                        if rs1_as_imm == 0 // index of rs1
+                                        {
+                                            // do nothing
+                                        } else {
+                                            non_determinism_source.write_with_memory_access(&*memory_source, write_val);
+                                        }
+                                    } else {
+                                        non_determinism_source.write_with_memory_access(&*memory_source, write_val);
+                                    }
+                                }
+                                _ => {
+                                    let t = CSR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                                    println!("Custom CSR = 0x{:04x} WRITE at cycle {}, total: {}", csr_number, proc_cycle, t + 1);
+                                    csr_processor.process_write(memory_source, tracer, mmu, csr_number, rs1, rs1_as_imm, &mut trap, proc_cycle, cycle_timestamp);
+                                    if trap.is_a_trap() {
+                                        break 'cycle_block;
+                                    }
                                 }
                             }
                         }
-
                         // and writeback
                     } else if funct3 == 0b000 {
                         // SYSTEM

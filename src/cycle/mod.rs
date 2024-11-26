@@ -13,6 +13,8 @@ pub trait MachineConfig: 'static + Clone + Copy + Hash + std::fmt::Debug + Parti
     const SUPPORT_ROT: bool;
     const SUPPORT_MOPS: bool;
     const HANDLE_EXCEPTIONS: bool;
+    const SUPPORT_STANDARD_CSRS: bool;
+    const SUPPORT_ONLY_CSRRW: bool;
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -27,6 +29,8 @@ impl MachineConfig for IMStandardIsaConfig {
     const SUPPORT_ROT: bool = false;
     const SUPPORT_MOPS: bool = false;
     const HANDLE_EXCEPTIONS: bool = false;
+    const SUPPORT_STANDARD_CSRS: bool = false;
+    const SUPPORT_ONLY_CSRRW: bool = true;
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -41,4 +45,6 @@ impl MachineConfig for ReducedIMIsaConfig {
     const SUPPORT_ROT: bool = false;
     const SUPPORT_MOPS: bool = true;
     const HANDLE_EXCEPTIONS: bool = false;
+    const SUPPORT_STANDARD_CSRS: bool = false;
+    const SUPPORT_ONLY_CSRRW: bool = true;
 }
