@@ -1070,33 +1070,41 @@ where
                 trap, pc, proc_cycle, instr
             );
 
-            let trap = trap.as_register_value();
-            if trap & INTERRUPT_MASK != 0 {
-                // interrupt, not a trap. Always machine level in our system
-                self.machine_mode_trap_data.handling.cause = trap;
-                self.machine_mode_trap_data.handling.tval = 0;
-                pc = pc.wrapping_add(4u32); // PC points to where the PC will return!
+            if Config::HANDLE_EXCEPTIONS == false {
+                panic!("Simulator encountered an exception");
             } else {
-                self.machine_mode_trap_data.handling.cause = trap;
-                // TODO: here we have a freedom of what to put into tval. We place opcode value now, because PC will be placed into EPC below
-                self.machine_mode_trap_data.handling.tval = instr;
+                let trap = trap.as_register_value();
+                if trap & INTERRUPT_MASK != 0 {
+                    // interrupt, not a trap. Always machine level in our system
+                    self.machine_mode_trap_data.handling.cause = trap;
+                    self.machine_mode_trap_data.handling.tval = 0;
+                    pc = pc.wrapping_add(4u32); // PC points to where the PC will return!
+                } else {
+                    self.machine_mode_trap_data.handling.cause = trap;
+                    // TODO: here we have a freedom of what to put into tval. We place opcode value now, because PC will be placed into EPC below
+                    self.machine_mode_trap_data.handling.tval = instr;
+                }
+                // println!("Trapping at pc = 0x{:08x} into PC = 0x{:08x}. MECP is set to 0x{:08x}", pc, self.machine_mode_trap_data.setup.tvec, pc);
+                // self.pretty_dump();
+                // self.stack_dump(memory, mmu);
+
+                self.machine_mode_trap_data.handling.epc = pc;
+                // update machine status register to reflect previous privilege
+
+                // On an interrupt, the system moves current MIE into MPIE
+                let mie =
+                    MStatusRegister::mie_aligned_bit(self.machine_mode_trap_data.state.status);
+                MStatusRegister::set_mpie_to_value(
+                    &mut self.machine_mode_trap_data.state.status,
+                    mie,
+                );
+
+                // go to trap vector
+                pc = self.machine_mode_trap_data.setup.tvec;
+
+                // Enter machine mode
+                self.extra_flags.set_mode(Mode::Machine);
             }
-            // println!("Trapping at pc = 0x{:08x} into PC = 0x{:08x}. MECP is set to 0x{:08x}", pc, self.machine_mode_trap_data.setup.tvec, pc);
-            // self.pretty_dump();
-            // self.stack_dump(memory, mmu);
-
-            self.machine_mode_trap_data.handling.epc = pc;
-            // update machine status register to reflect previous privilege
-
-            // On an interrupt, the system moves current MIE into MPIE
-            let mie = MStatusRegister::mie_aligned_bit(self.machine_mode_trap_data.state.status);
-            MStatusRegister::set_mpie_to_value(&mut self.machine_mode_trap_data.state.status, mie);
-
-            // go to trap vector
-            pc = self.machine_mode_trap_data.setup.tvec;
-
-            // Enter machine mode
-            self.extra_flags.set_mode(Mode::Machine);
         }
 
         self.pc = pc;
