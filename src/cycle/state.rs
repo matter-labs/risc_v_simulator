@@ -1052,53 +1052,57 @@ where
                         }
                         // and writeback
                     } else if funct3 == 0b000 {
-                        // SYSTEM
-                        rd = 0;
-                        // mainly we support WFI, MRET, ECALL and EBREAK
-                        if csr_number == 0x105 {
-                            println!("WFI: proc_cycle: {:?}, pc = {}, opcode = 0x{:08x}", proc_cycle, pc, instr);
-                            self.extra_flags.set_wait_for_interrupt_bit();
-                            self.pc = pc.wrapping_add(4u32);
-                            return;
-                        } else if csr_number == 0x302 {
-                            // MRET
-                            let existing_mstatus = self.machine_mode_trap_data.state.status;
-                            let previous_privilege = MStatusRegister::mpp(existing_mstatus);
-                            // MRET then in mstatus/mstatush sets MPV=0, MPP=0,
-                            // MIE=MPIE, and MPIE=1. Lastly, MRET sets the privilege mode as previously determined, and
-                            // sets pc=mepc.
-                            MStatusRegister::clear_mpp(&mut self.machine_mode_trap_data.state.status);
-                            MStatusRegister::clear_mprv(&mut self.machine_mode_trap_data.state.status);
-                            let mpie = MStatusRegister::mpie_aligned_bit(self.machine_mode_trap_data.state.status);
-                            MStatusRegister::set_mie_to_value(&mut self.machine_mode_trap_data.state.status, mpie);
-                            MStatusRegister::set_mpie(&mut self.machine_mode_trap_data.state.status);
+                        // TODO: add to configuration later
+                        trap = TrapReason::IllegalInstruction;
+                        break 'cycle_block;
 
-                            // set privilege
-                            self.extra_flags.set_mode_raw(Mode::User.as_register_value() | previous_privilege);
-                            pc = self.machine_mode_trap_data.handling.epc.wrapping_sub(4u32);
-                        } else {
-                            match csr_number {
-                                0 => {
-                                    // ECALL
-                                    trap = match current_privilege_mode {
-                                        Mode::Machine => TrapReason::EnvironmentCallFromMMode,
-                                        Mode::User => TrapReason::EnvironmentCallFromUMode,
-                                        _ => TrapReason::IllegalInstruction,
-                                    };
+                        // // SYSTEM
+                        // rd = 0;
+                        // // mainly we support WFI, MRET, ECALL and EBREAK
+                        // if csr_number == 0x105 {
+                        //     println!("WFI: proc_cycle: {:?}, pc = {}, opcode = 0x{:08x}", proc_cycle, pc, instr);
+                        //     self.extra_flags.set_wait_for_interrupt_bit();
+                        //     self.pc = pc.wrapping_add(4u32);
+                        //     return;
+                        // } else if csr_number == 0x302 {
+                        //     // MRET
+                        //     let existing_mstatus = self.machine_mode_trap_data.state.status;
+                        //     let previous_privilege = MStatusRegister::mpp(existing_mstatus);
+                        //     // MRET then in mstatus/mstatush sets MPV=0, MPP=0,
+                        //     // MIE=MPIE, and MPIE=1. Lastly, MRET sets the privilege mode as previously determined, and
+                        //     // sets pc=mepc.
+                        //     MStatusRegister::clear_mpp(&mut self.machine_mode_trap_data.state.status);
+                        //     MStatusRegister::clear_mprv(&mut self.machine_mode_trap_data.state.status);
+                        //     let mpie = MStatusRegister::mpie_aligned_bit(self.machine_mode_trap_data.state.status);
+                        //     MStatusRegister::set_mie_to_value(&mut self.machine_mode_trap_data.state.status, mpie);
+                        //     MStatusRegister::set_mpie(&mut self.machine_mode_trap_data.state.status);
 
-                                    break 'cycle_block;
-                                },
-                                1 => {
-                                    // EBREAK
-                                    trap = TrapReason::Breakpoint;
-                                    break 'cycle_block;
-                                },
-                                _ => {
-                                    trap = TrapReason::IllegalInstruction;
-                                    break 'cycle_block;
-                                }
-                            }
-                        }
+                        //     // set privilege
+                        //     self.extra_flags.set_mode_raw(Mode::User.as_register_value() | previous_privilege);
+                        //     pc = self.machine_mode_trap_data.handling.epc.wrapping_sub(4u32);
+                        // } else {
+                        //     match csr_number {
+                        //         0 => {
+                        //             // ECALL
+                        //             trap = match current_privilege_mode {
+                        //                 Mode::Machine => TrapReason::EnvironmentCallFromMMode,
+                        //                 Mode::User => TrapReason::EnvironmentCallFromUMode,
+                        //                 _ => TrapReason::IllegalInstruction,
+                        //             };
+
+                        //             break 'cycle_block;
+                        //         },
+                        //         1 => {
+                        //             // EBREAK
+                        //             trap = TrapReason::Breakpoint;
+                        //             break 'cycle_block;
+                        //         },
+                        //         _ => {
+                        //             trap = TrapReason::IllegalInstruction;
+                        //             break 'cycle_block;
+                        //         }
+                        //     }
+                        // }
                     } else if funct3 & ZIMOP_MASK == ZIMOP_MASK {
                         const MOP_FUNCT7_TEST: u32 = 0b1000001u32;
                         let funct7 = RTypeOpcode::funct7(instr);
