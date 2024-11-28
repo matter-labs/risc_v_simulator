@@ -65,6 +65,7 @@ where
         FnPost: FnMut(&mut Self, usize),
     {
         let mut previous_pc = self.state.pc;
+        let mut end_of_execution_reached = false;
 
         for cycle in 0..self.cycles as usize {
             if let Some(profiler) = self.profiler.as_mut() {
@@ -87,22 +88,22 @@ where
                 &mut self.non_determinism_source,
                 cycle as u32,
             );
-            // self.state.cycle(
-            //     &mut self.memory_source,
-            //     &mut self.memory_tracer,
-            //     &mut self.mmu,
-            //     &mut self.non_determinism_source,
-            //     cycle as u32,
-            // );
 
             fn_post(self, cycle);
 
             if self.state.pc == previous_pc {
+                end_of_execution_reached = true;
                 println!("Took {} cycles to finish", cycle);
                 break;
             }
             previous_pc = self.state.pc;
         }
+
+        assert!(
+            end_of_execution_reached,
+            "program failed to each the end of execution over {} cycles",
+            self.cycles
+        );
 
         if let Some(profiler) = self.profiler.as_mut() {
             profiler.print_stats();
