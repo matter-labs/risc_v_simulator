@@ -12,16 +12,16 @@ addr2line = "0.22"
 object = "*"
 memmap2 = "*"
 inferno = "*"
-blake2s_u32 = { git = "https://github.com/matter-labs/air_compiler.git", branch = "av_one_row_compiler", optional = true }
+blake2s_u32 = { git = "https://github.com/matter-labs/air_compiler.git", rev = "6e5329b78372eef167c5304d6820278bc8170203", optional = true }
 # blake2s_u32 = { path = "../air_compiler/blake2s_u32", optional = true }
 
 [dev-dependencies]
-lib-rv32-asm = {git = "https://github.com/shamatar/lib-rv32.git" }
+lib-rv32-asm = {git = "https://github.com/shamatar/lib-rv32.git", rev = "50272852d0f079ad9838d1c0f3a9ce5c1c371b24" }
 
 [features]
-default = []
-# default = ["delegations"]
-delegations = ["blake2s_u32"]
+# default = []
+default = ["delegation"]
+delegation = ["blake2s_u32"]
 
 [[bin]]
 name = "runner"

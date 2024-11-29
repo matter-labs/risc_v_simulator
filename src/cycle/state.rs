@@ -1,7 +1,7 @@
 use std::hint::unreachable_unchecked;
 
 use super::status_registers::*;
-use crate::abstractions::csr_processor::{self, CustomCSRProcessor};
+use crate::abstractions::csr_processor::CustomCSRProcessor;
 use crate::abstractions::memory::{AccessType, MemorySource};
 use crate::abstractions::non_determinism::NonDeterminismCSRSource;
 use crate::abstractions::tracer::Tracer;
@@ -16,6 +16,8 @@ use rand::Rng;
 pub const NUM_REGISTERS: usize = 32;
 pub const MAX_MEMORY_OPS_PER_CYCLE: u32 = 3;
 pub const NON_DETERMINISM_CSR: u32 = 0x7c0;
+
+static CSR_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
@@ -306,7 +308,7 @@ impl RiscV32State {
         non_determinism_source: &mut ND,
         proc_cycle: u32,
     ) {
-        #[cfg(not(feature = "delegations"))]
+        #[cfg(not(feature = "delegation"))]
         {
             use crate::cycle::state::csr_processor::NoExtraCSRs;
             self.cycle_ext(
@@ -319,7 +321,7 @@ impl RiscV32State {
                 proc_cycle,
             );
         }
-        #[cfg(feature = "delegations")]
+        #[cfg(feature = "delegation")]
         {
             use crate::delegations::DelegationsCSRProcessor;
             self.cycle_ext(
@@ -783,18 +785,19 @@ impl RiscV32State {
                 0b1110011 => {
                     // various control instructions, we implement only a subset
                     const ZICSR_MASK: u32 = 0x3;
+                    const ZIMOP_MASK: u32 = 0x4;
 
                     let funct3 = ITypeOpcode::funct3(instr);
                     let csr_number = ITypeOpcode::imm(instr);
-                    let csr_privilege_mode = get_bits_and_align_right(csr_number, 8, 2);
-                    let csr_privilege_mode = Mode::from_proper_bit_value(csr_privilege_mode);
-                    if csr_privilege_mode.as_register_value() > current_privilege_mode.as_register_value() {
-                        trap = TrapReason::IllegalInstruction;
-                        break 'cycle_block;
-                    }
 
                     // so now we can just use full integer values for csr numbers
                     if funct3 & ZICSR_MASK != 0 {
+                        let csr_privilege_mode = get_bits_and_align_right(csr_number, 8, 2);
+                        let csr_privilege_mode = Mode::from_proper_bit_value(csr_privilege_mode);
+                        if csr_privilege_mode.as_register_value() > current_privilege_mode.as_register_value() {
+                            trap = TrapReason::IllegalInstruction;
+                            break 'cycle_block;
+                        }
                         let rs1_as_imm = ITypeOpcode::rs1(instr);
 
                         // read
@@ -839,7 +842,7 @@ impl RiscV32State {
                                 tracer.trace_non_determinism_read(ret_val, proc_cycle, cycle_timestamp);
                             }
                             _ => {
-                                println!("Custom CSR = 0x{:04x}", csr_number);
+                                println!("Custom CSR = 0x{:04x} READ at cycle {}", csr_number, proc_cycle);
                                 csr_processor.process_read(memory_source, tracer, mmu, csr_number, rs1, rs1_as_imm, &mut ret_val, &mut trap, proc_cycle, cycle_timestamp);
                                 if trap.is_a_trap() {
                                     break 'cycle_block;
@@ -891,7 +894,8 @@ impl RiscV32State {
                                 }
                             }
                             _ => {
-                                println!("Custom CSR = 0x{:04x}", csr_number);
+                                let t = CSR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                                println!("Custom CSR = 0x{:04x} WRITE at cycle {}, total: {}", csr_number, proc_cycle, t + 1);
                                 csr_processor.process_write(memory_source, tracer, mmu, csr_number, rs1, rs1_as_imm, &mut trap, proc_cycle, cycle_timestamp);
                                 if trap.is_a_trap() {
                                     break 'cycle_block;
@@ -905,7 +909,7 @@ impl RiscV32State {
                         rd = 0;
                         // mainly we support WFI, MRET, ECALL and EBREAK
                         if csr_number == 0x105 {
-                            println!("WFI: proc_cycle: {:?}", proc_cycle);
+                            println!("WFI: proc_cycle: {:?}, pc = {}, opcode = 0x{:08x}", proc_cycle, pc, instr);
                             self.extra_flags.set_wait_for_interrupt_bit();
                             self.pc = pc.wrapping_add(4u32);
                             return;
@@ -947,6 +951,35 @@ impl RiscV32State {
                                     break 'cycle_block;
                                 }
                             }
+                        }
+                    } else if funct3 & ZIMOP_MASK == ZIMOP_MASK {
+                        const MOP_FUNCT7_TEST: u32 = 0b1000001u32;
+                        let funct7 = RTypeOpcode::funct7(instr);
+                        if funct7 & MOP_FUNCT7_TEST == MOP_FUNCT7_TEST {
+                            let mop_number = ((funct7 & 0b110) >> 1) | ((funct7 & 0b100000) >> 5);
+                            const MODULUS_U32: u32 = 0x7fffffffu32;
+                            const MODULUS_U64: u64 = 0x7fffffffu64;
+                            let operand_1 = rs1;
+                            let operand_2 = rs2;
+                            match mop_number {
+                                0 => {
+                                    ret_val = operand_1.wrapping_add(operand_2) % MODULUS_U32;
+                                },
+                                1 => {
+                                    ret_val = MODULUS_U32.wrapping_add(operand_1).wrapping_sub(operand_2) % MODULUS_U32;
+                                },
+                                2 => {
+                                    ret_val = (((operand_1 as u64) * (operand_2 as u64)) % MODULUS_U64) as u32;
+                                }
+                                _ => {
+                                    trap = TrapReason::IllegalInstruction;
+                                    break 'cycle_block;
+                                }
+                            }
+
+                        } else {
+                            trap = TrapReason::IllegalInstruction;
+                            break 'cycle_block;
                         }
                     } else {
                         trap = TrapReason::IllegalInstruction;

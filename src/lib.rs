@@ -1,4 +1,3 @@
-#![feature(const_mut_refs)]
 #![feature(array_chunks)]
 #![feature(iter_array_chunks)]
 #![feature(let_chains)]
@@ -12,7 +11,7 @@ pub mod runner;
 pub mod sim;
 pub mod utils;
 
-#[cfg(feature = "delegations")]
+#[cfg(feature = "delegation")]
 pub mod delegations;
 
 #[cfg(test)]

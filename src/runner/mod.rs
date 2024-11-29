@@ -11,12 +11,24 @@ use crate::{abstractions::memory::VectorMemoryImpl, cycle::state::RiscV32State};
 pub const DEFAULT_ENTRY_POINT: u32 = 0x01000000;
 pub const CUSTOM_ENTRY_POINT: u32 = 0;
 
-pub fn run_simple_simulator(config: SimulatorConfig) {
+pub fn run_simple_simulator(config: SimulatorConfig) -> [u32; 8] {
     run_simple_with_entry_point(config)
 }
 
-pub fn run_simple_with_entry_point(config: SimulatorConfig) {
-    run_simple_with_entry_point_and_non_determimism_source(config, QuasiUARTSource::default());
+pub fn run_simple_with_entry_point(config: SimulatorConfig) -> [u32; 8] {
+    let (_, state) =
+        run_simple_with_entry_point_and_non_determimism_source(config, QuasiUARTSource::default());
+    let registers = state.registers;
+    [
+        registers[10],
+        registers[11],
+        registers[12],
+        registers[13],
+        registers[14],
+        registers[15],
+        registers[16],
+        registers[17],
+    ]
 }
 
 pub fn run_simple_with_entry_point_and_non_determimism_source<

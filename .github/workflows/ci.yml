@@ -1,0 +1,25 @@
+name: "Rust CI"
+on:
+  push:
+    branches:
+      - main
+      - stable
+  pull_request:
+
+jobs:
+  tests:
+    name: tests
+    runs-on: [matterlabs-ci-runner]
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rustflags: ""
+      - name: Setup
+        run: |
+          rustup set profile minimal
+          git config --global --add url."https://${{ secrets.ZKSYNC_ADMIN_BOT_ORG_REPO_WRITE }}:x-oauth-basic@github.com/".insteadOf https://github.com/
+      - name: Compile 
+        run: cargo build --verbose
+      - name: Run unit tests
+        run: cargo test

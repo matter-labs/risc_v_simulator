@@ -1,7 +1,4 @@
-use risc_v_simulator::{
-    runner::{run_simple_simulator, DEFAULT_ENTRY_POINT},
-    sim::SimulatorConfig,
-};
+use risc_v_simulator::{runner::run_simple_simulator, sim::SimulatorConfig};
 
 pub fn main() {
     // let args: Vec<String> = std::env::args().collect();
@@ -10,14 +7,30 @@ pub fn main() {
     // let path = &args[1];
     println!("ZK RISC-V simulator is starting");
 
-    // let path = "../zk_os/app.bin";
-    // let path = "../picorv32/firmware/firmware.bin";
-    // let path = "../test_riscv_programs/app.bin";
-    // let path = "../zk_ee/zk_os_test_example/app.bin";
-    // let path = "../zk_ee/zk_os_test_example/app.bin";
     let path = "../zk_ee/zk_os/app.bin";
+    let path_sym = "../zk_ee/zk_os/app.elf";
 
-    let config = SimulatorConfig::simple(path);
+    use risc_v_simulator::sim::DiagnosticsConfig;
+    use risc_v_simulator::sim::ProfilerConfig;
 
-    run_simple_simulator(config);
+    let mut config = SimulatorConfig::simple(path);
+    config.entry_point = 0;
+    config.diagnostics = Some({
+        let mut d = DiagnosticsConfig::new(std::path::PathBuf::from(path_sym));
+
+        d.profiler_config = {
+            let mut p =
+                ProfilerConfig::new(std::env::current_dir().unwrap().join("flamegraph.svg"));
+
+            p.frequency_recip = 1;
+            p.reverse_graph = false;
+
+            Some(p)
+        };
+
+        d
+    });
+
+    let output = run_simple_simulator(config);
+    dbg!(output);
 }

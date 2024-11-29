@@ -1,12 +1,16 @@
 use blake2s::blake2s_round_function;
 use blake2s::BLAKE2S_ACCESS_ID;
 
+use blake2_round_function::blake2_round_function;
+use blake2_round_function::BLAKE2_ROUND_FUNCTION_ACCESS_ID;
+
 use crate::abstractions::csr_processor::CustomCSRProcessor;
 use crate::abstractions::memory::*;
 use crate::abstractions::tracer::*;
 use crate::cycle::status_registers::TrapReason;
 use crate::mmu::*;
 
+pub mod blake2_round_function;
 pub mod blake2s;
 
 #[derive(Clone, Copy, Debug)]
@@ -30,6 +34,7 @@ impl CustomCSRProcessor for DelegationsCSRProcessor {
         *ret_val = 0;
         match csr_index {
             BLAKE2S_ACCESS_ID => {}
+            BLAKE2_ROUND_FUNCTION_ACCESS_ID => {}
             _ => {
                 *trap = TrapReason::IllegalInstruction;
             }
@@ -52,6 +57,17 @@ impl CustomCSRProcessor for DelegationsCSRProcessor {
         match csr_index {
             BLAKE2S_ACCESS_ID => {
                 blake2s_round_function::<_, _, _, false>(
+                    memory_source,
+                    tracer,
+                    mmu,
+                    rs1_value,
+                    trap,
+                    proc_cycle,
+                    cycle_timestamp,
+                );
+            }
+            BLAKE2_ROUND_FUNCTION_ACCESS_ID => {
+                blake2_round_function::<_, _, _>(
                     memory_source,
                     tracer,
                     mmu,
