@@ -131,11 +131,13 @@ impl SimulatorConfig {
     }
 }
 
+#[derive(Clone)]
 pub struct DiagnosticsConfig {
     symbols_path: PathBuf,
     pub profiler_config: Option<ProfilerConfig>,
 }
 
+#[derive(Clone)]
 pub struct ProfilerConfig {
     output_path: PathBuf,
     pub reverse_graph: bool,
