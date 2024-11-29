@@ -456,7 +456,9 @@ mod diag {
         prologue_end: u64,
         // Address of the first epilogue instruction.
         epilogue_begin: u64,
+        #[allow(dead_code)]
         no_return: bool,
+        #[allow(dead_code)]
         is_inlined: bool,
         is_tracked: bool,
         name: String,
@@ -558,6 +560,7 @@ mod diag {
             r
         }
 
+        #[allow(dead_code)]
         /// Prints a bunch of info about a frame to console.
         fn inspect_frame(&self, address: u64, frame: &Frame<'_, EndianSlice<'_, RunTimeEndian>>) {
             let x = self.ctx.find_dwarf_and_unit(address).skip_all_loads();
