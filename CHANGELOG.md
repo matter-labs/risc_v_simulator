@@ -1,5 +1,11 @@
 # Changelog
 
+## v 0.1.19 
+Created on 2024-11-29
+
+Added Reduced machine.
+
+
 ## v 0.1.17 - first release
 Created on 2024-11-19.
 
