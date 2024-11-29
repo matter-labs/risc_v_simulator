@@ -3,6 +3,8 @@ use std::path::Path;
 use crate::abstractions::non_determinism::NonDeterminismCSRSource;
 use crate::abstractions::non_determinism::QuasiUARTSource;
 use crate::cycle::state::StateTracer;
+use crate::cycle::IMStandardIsaConfig;
+use crate::cycle::MachineConfig;
 use crate::mmu::NoMMU;
 use crate::sim::Simulator;
 use crate::sim::SimulatorConfig;
@@ -37,7 +39,23 @@ pub fn run_simple_with_entry_point_and_non_determimism_source<
     config: SimulatorConfig,
     non_determinism_source: S,
 ) -> (S, RiscV32State) {
-    let state = RiscV32State::initial(config.entry_point);
+    run_simple_with_entry_point_and_non_determimism_source_for_config::<S, IMStandardIsaConfig>(
+        config,
+        non_determinism_source,
+    )
+}
+
+pub fn run_simple_with_entry_point_and_non_determimism_source_for_config<
+    S: NonDeterminismCSRSource<VectorMemoryImpl>,
+    C: MachineConfig,
+>(
+    config: SimulatorConfig,
+    non_determinism_source: S,
+) -> (S, RiscV32State<C>)
+where
+    [(); { C::SUPPORT_LOAD_LESS_THAN_WORD } as usize]:,
+{
+    let state = RiscV32State::<C>::initial(config.entry_point);
     let memory_tracer = ();
     let mmu = NoMMU { sapt: 0 };
 
@@ -86,7 +104,16 @@ pub fn run_simple_with_entry_point_and_non_determimism_source<
 // }
 
 pub fn run_simulator_with_traces(config: SimulatorConfig) -> (StateTracer, ()) {
-    let state = RiscV32State::initial(CUSTOM_ENTRY_POINT);
+    run_simulator_with_traces_for_config(config)
+}
+
+pub fn run_simulator_with_traces_for_config<C: MachineConfig>(
+    config: SimulatorConfig,
+) -> (StateTracer<C>, ())
+where
+    [(); { C::SUPPORT_LOAD_LESS_THAN_WORD } as usize]:,
+{
+    let state = RiscV32State::<C>::initial(CUSTOM_ENTRY_POINT);
     let memory_tracer = ();
     let mmu = NoMMU { sapt: state.sapt };
     let non_determinism_source = QuasiUARTSource::default();

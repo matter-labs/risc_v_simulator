@@ -1,13 +1,13 @@
 use std::hint::unreachable_unchecked;
 
-use super::status_registers::*;
+use super::{status_registers::*, MachineConfig};
 use crate::abstractions::csr_processor::CustomCSRProcessor;
 use crate::abstractions::memory::{AccessType, MemorySource};
 use crate::abstractions::non_determinism::NonDeterminismCSRSource;
 use crate::abstractions::tracer::Tracer;
 use crate::abstractions::{mem_read, mem_write};
+use crate::cycle::IMStandardIsaConfig;
 use crate::mmu::MMUImplementation;
-
 use crate::utils::*;
 
 use super::opcode_formats::*;
@@ -17,7 +17,7 @@ pub const NUM_REGISTERS: usize = 32;
 pub const MAX_MEMORY_OPS_PER_CYCLE: u32 = 3;
 pub const NON_DETERMINISM_CSR: u32 = 0x7c0;
 
-static CSR_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+// static CSR_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
@@ -119,29 +119,29 @@ impl ExtraFlags {
 }
 
 #[derive(Clone, Debug)]
-pub struct StateTracer {
-    tracer: Vec<RiscV32State>,
+pub struct StateTracer<C: MachineConfig = IMStandardIsaConfig> {
+    tracer: Vec<RiscV32State<C>>,
 }
 
-impl StateTracer {
+impl<C: MachineConfig> StateTracer<C> {
     pub fn new_for_num_cycles(num_cycles: usize) -> Self {
         Self {
             tracer: Vec::with_capacity(num_cycles + 1),
         }
     }
 
-    pub fn insert(&mut self, idx: usize, state: RiscV32State) {
+    pub fn insert(&mut self, idx: usize, state: RiscV32State<C>) {
         assert_eq!(self.tracer.len(), idx, "trying to insert out of order");
         self.tracer.push(state);
     }
 
-    pub fn get(&self, idx: usize) -> Option<&RiscV32State> {
+    pub fn get(&self, idx: usize) -> Option<&RiscV32State<C>> {
         self.tracer.get(idx)
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RiscV32State {
+pub struct RiscV32State<Config: MachineConfig = IMStandardIsaConfig> {
     pub registers: [u32; NUM_REGISTERS],
     pub pc: u32,
     pub extra_flags: ExtraFlags, // everything that doesn't need full register
@@ -153,9 +153,14 @@ pub struct RiscV32State {
     pub machine_mode_trap_data: ModeStatusAndTrapRegisters,
 
     pub sapt: u32, // for debugging
+
+    _marker: std::marker::PhantomData<Config>,
 }
 
-impl RiscV32State {
+impl<Config: MachineConfig> RiscV32State<Config>
+where
+    [(); { Config::SUPPORT_LOAD_LESS_THAN_WORD } as usize]:,
+{
     pub fn initial(initial_pc: u32) -> Self {
         // we should start in machine mode, the rest is not important and can be by default
         let registers = [0u32; NUM_REGISTERS];
@@ -193,6 +198,7 @@ impl RiscV32State {
             timer_match,
             machine_mode_trap_data,
             sapt,
+            _marker: std::marker::PhantomData,
         }
     }
 
@@ -243,6 +249,7 @@ impl RiscV32State {
             machine_mode_trap_data,
 
             sapt: rng.gen(),
+            _marker: std::marker::PhantomData,
         };
 
         state
@@ -250,7 +257,7 @@ impl RiscV32State {
 
     #[must_use]
     #[inline(always)]
-    pub fn get_first_register<TR: Tracer>(
+    pub fn get_first_register<TR: Tracer<Config>>(
         &self,
         reg_idx: u32,
         proc_cycle: u32,
@@ -265,7 +272,7 @@ impl RiscV32State {
 
     #[must_use]
     #[inline(always)]
-    pub fn get_second_register<TR: Tracer>(
+    pub fn get_second_register<TR: Tracer<Config>>(
         &self,
         reg_idx: u32,
         proc_cycle: u32,
@@ -279,7 +286,7 @@ impl RiscV32State {
     }
 
     #[inline(always)]
-    pub fn set_register<TR: Tracer>(
+    pub fn set_register<TR: Tracer<Config>>(
         &mut self,
         reg_idx: u32,
         value: u32,
@@ -297,9 +304,9 @@ impl RiscV32State {
     pub fn cycle<
         'a,
         M: MemorySource,
-        TR: Tracer,
+        TR: Tracer<Config>,
         ND: NonDeterminismCSRSource<M>,
-        MMU: MMUImplementation<M, TR>,
+        MMU: MMUImplementation<M, TR, Config>,
     >(
         &'a mut self,
         memory_source: &'a mut M,
@@ -310,7 +317,7 @@ impl RiscV32State {
     ) {
         #[cfg(not(feature = "delegation"))]
         {
-            use crate::cycle::state::csr_processor::NoExtraCSRs;
+            use crate::abstractions::csr_processor::NoExtraCSRs;
             self.cycle_ext(
                 memory_source,
                 tracer,
@@ -339,9 +346,9 @@ impl RiscV32State {
     pub fn cycle_ext<
         'a,
         M: MemorySource,
-        TR: Tracer,
+        TR: Tracer<Config>,
         ND: NonDeterminismCSRSource<M>,
-        MMU: MMUImplementation<M, TR>,
+        MMU: MMUImplementation<M, TR, Config>,
         CSR: CustomCSRProcessor,
     >(
         &'a mut self,
@@ -385,7 +392,7 @@ impl RiscV32State {
                 break 'cycle_block;
             }
 
-            instr = mem_read(
+            instr = mem_read::<_, _, _, false>(
                 memory_source,
                 tracer,
                 instruction_phys_address,
@@ -542,7 +549,7 @@ impl RiscV32State {
                             // Memory implementation should handle read in full. For now we only use one
                             // that doesn't step over 4 byte boundary ever, meaning even though formal address is not 4 byte aligned,
                             // loads of u8/u16/u32 are still "aligned"
-                            let operand = mem_read(
+                            let operand = mem_read::<_, _, _, { Config::SUPPORT_LOAD_LESS_THAN_WORD } >(
                                 memory_source, tracer, operand_phys_address,
                                 num_bytes, AccessType::MemLoad, proc_cycle, cycle_timestamp, &mut trap
                             );
@@ -550,15 +557,34 @@ impl RiscV32State {
                                 debug_assert_eq!(trap, TrapReason::LoadAddressMisaligned);
                                 break 'cycle_block;
                             }
-                            // now depending on the type of load we extend it
-                            ret_val = match a {
-                                0 => sign_extend_8(operand),
-                                1 => sign_extend_16(operand),
-                                2 => operand,
-                                4 => zero_extend_8(operand),
-                                5 => zero_extend_16(operand),
-                                _ => unsafe {unreachable_unchecked()}
-                            };
+                            if Config::SUPPORT_SIGNED_LOAD {
+                                // now depending on the type of load we extend it
+                                ret_val = match a {
+                                    0 => sign_extend_8(operand),
+                                    1 => sign_extend_16(operand),
+                                    2 => operand,
+                                    4 => zero_extend_8(operand),
+                                    5 => zero_extend_16(operand),
+                                    _ => unsafe {unreachable_unchecked()}
+                                };
+                            } else {
+                                // now depending on the type of load we extend it
+                                ret_val = match a {
+                                    0 => {
+                                        trap = TrapReason::IllegalInstruction;
+                                        break 'cycle_block;
+                                    },
+                                    1 => {
+                                        trap = TrapReason::IllegalInstruction;
+                                        break 'cycle_block;
+                                    },
+                                    2 => operand,
+                                    4 => zero_extend_8(operand),
+                                    5 => zero_extend_16(operand),
+                                    _ => unsafe {unreachable_unchecked()}
+                                };
+                            }
+
                         },
                         _ => {
                             trap = TrapReason::IllegalInstruction;
@@ -596,7 +622,7 @@ impl RiscV32State {
                         a @ 0 | a @ 1 | a @ 2 => {
                             let store_length = 1 << a;
                             // memory handles the write in full, whether it's aligned or not, or whatever
-                            mem_write(
+                            mem_write::<_, _, _, { Config::SUPPORT_LOAD_LESS_THAN_WORD }>(
                                 memory_source, tracer, operand_phys_address, rs2, store_length,
                                 proc_cycle, cycle_timestamp, &mut trap
                             );
@@ -633,19 +659,40 @@ impl RiscV32State {
                         // RV32M - multiplication subset
                         ret_val = match funct3 {
                             0 => { (operand_1 as i32).wrapping_mul(operand_2 as i32) as u32}, // signed MUL
-                            1 => { (((operand_1 as i32) as i64).wrapping_mul((operand_2 as i32) as i64) >> 32) as u32}, // MULH
-                            2 => { (((operand_1 as i32) as i64).wrapping_mul(((operand_2 as u32) as u64) as i64) >> 32) as u32}, // MULHSU
+                            1 => {
+                                // MULH
+                                if Config::SUPPORT_SIGNED_MUL {
+                                    (((operand_1 as i32) as i64).wrapping_mul((operand_2 as i32) as i64) >> 32) as u32
+                                } else {
+                                    trap = TrapReason::IllegalInstruction;
+                                    break 'cycle_block;
+                                }
+                            },
+                            2 => {
+                                // MULHSU
+                                if Config::SUPPORT_SIGNED_MUL {
+                                    (((operand_1 as i32) as i64).wrapping_mul(((operand_2 as u32) as u64) as i64) >> 32) as u32
+                                } else {
+                                    trap = TrapReason::IllegalInstruction;
+                                    break 'cycle_block;
+                                }
+                            },
                             3 => { ((operand_1 as u64).wrapping_mul(operand_2 as u64) >> 32) as u32}, // MULHU
                             4 => {
                                 // DIV
-                                if operand_2 == 0 {
-                                    -1i32 as u32
-                                } else {
-                                    if operand_1 as i32 == i32::MIN && operand_2 as i32 == -1 {
-                                        operand_1
+                                if Config::SUPPORT_SIGNED_DIV {
+                                    if operand_2 == 0 {
+                                        -1i32 as u32
                                     } else {
-                                        ((operand_1 as i32) / (operand_2 as i32)) as u32
+                                        if operand_1 as i32 == i32::MIN && operand_2 as i32 == -1 {
+                                            operand_1
+                                        } else {
+                                            ((operand_1 as i32) / (operand_2 as i32)) as u32
+                                        }
                                     }
+                                } else {
+                                    trap = TrapReason::IllegalInstruction;
+                                    break 'cycle_block;
                                 }
                             },
                             5 => {
@@ -658,14 +705,19 @@ impl RiscV32State {
                             },
                             6 => {
                                 // REM
-                                if operand_2 == 0 {
-                                    operand_1
-                                } else {
-                                    if operand_1 as i32 == i32::MIN && operand_2 as i32 == -1 {
-                                        0u32
+                                if Config::SUPPORT_SIGNED_DIV {
+                                    if operand_2 == 0 {
+                                        operand_1
                                     } else {
-                                        ((operand_1 as i32) % (operand_2 as i32)) as u32
+                                        if operand_1 as i32 == i32::MIN && operand_2 as i32 == -1 {
+                                            0u32
+                                        } else {
+                                            ((operand_1 as i32) % (operand_2 as i32)) as u32
+                                        }
                                     }
+                                } else {
+                                    trap = TrapReason::IllegalInstruction;
+                                    break 'cycle_block;
                                 }
                             },
                             7 => {
@@ -674,21 +726,6 @@ impl RiscV32State {
                                     operand_1
                                 } else {
                                     operand_1 % operand_2
-                                }
-                            },
-                            _ => unsafe {
-                                unreachable_unchecked()
-                            },
-                        };
-                    } else if is_r_type && funct7 == 0b0000101 {
-                        // max/min
-                        ret_val = match funct3 {
-                            5 => {
-                                // MINU
-                                if operand_1 < operand_2 {
-                                    operand_1
-                                } else {
-                                    operand_2
                                 }
                             },
                             _ => unsafe {
@@ -710,7 +747,12 @@ impl RiscV32State {
                             },
                             1 => {
                                 if instr & ROTATE_MASK != 0 {
-                                    operand_1.rotate_left(operand_2 & 0x1f)
+                                    if Config::SUPPORT_ROT {
+                                        operand_1.rotate_left(operand_2 & 0x1f)
+                                    } else {
+                                        trap = TrapReason::IllegalInstruction;
+                                        break 'cycle_block;
+                                    }
                                 } else {
                                     // Shift left
                                     // shift is encoded in lowest 5 bits
@@ -731,12 +773,22 @@ impl RiscV32State {
                             },
                             5 => {
                                 if instr & ROTATE_MASK == ROTATE_MASK {
-                                    operand_1.rotate_right(operand_2 & 0x1f)
+                                    if Config::SUPPORT_ROT {
+                                        operand_1.rotate_right(operand_2 & 0x1f)
+                                    } else {
+                                        trap = TrapReason::IllegalInstruction;
+                                        break 'cycle_block;
+                                    }
                                 } else {
                                     // Arithmetic shift right
                                     // shift is encoded in lowest 5 bits
                                     if instr & ARITHMETIC_SHIFT_RIGHT_TEST_MASK != 0 {
-                                        ((operand_1 as i32) >> (operand_2 & 0x1f)) as u32
+                                        if Config::SUPPORT_SRA {
+                                            ((operand_1 as i32) >> (operand_2 & 0x1f)) as u32
+                                        } else {
+                                            trap = TrapReason::IllegalInstruction;
+                                            break 'cycle_block;
+                                        }
                                     } else {
                                         operand_1  >> (operand_2 & 0x1f)
                                     }
@@ -800,183 +852,286 @@ impl RiscV32State {
                         }
                         let rs1_as_imm = ITypeOpcode::rs1(instr);
 
-                        // read
-                        match csr_number {
-                            0x180 => {
-                                // satp
-                                ret_val = mmu.read_sapt(current_privilege_mode, &mut trap);
-                                if trap.is_a_trap() {
-                                    break 'cycle_block;
-                                }
-                            },
-                            0x300 => ret_val = self.machine_mode_trap_data.state.status, // mstatus
-                            //0x301 => ret_val = 0b01_00_0000_0001_0000_0001_0001_0000_0000u32, //misa (I + M + usemode)
-                            0x304 => ret_val = self.machine_mode_trap_data.state.ie, // mie
-                            0x305 => ret_val = self.machine_mode_trap_data.setup.tvec, // mtvec
-                            0x340 => ret_val = self.machine_mode_trap_data.handling.scratch, // mscratch
-                            0x341 => ret_val = self.machine_mode_trap_data.handling.epc, // mepc
-                            0x342 => ret_val = self.machine_mode_trap_data.handling.cause, // mcause
-                            0x343 => ret_val = self.machine_mode_trap_data.handling.tval, // mtval
-                            0x344 => ret_val = self.machine_mode_trap_data.state.ip, // mip
-                            //0xc00 => ret_val = self.cycle_counter as u32, // cycle
-                            //0xf11 => ret_val = 0, // vendor ID, will come up later on,
-                            NON_DETERMINISM_CSR => {
-                                // to imporve oracle usability we can try to avoid read
-                                // if we intend to write, so check oracle config
-                                ret_val = if ND::SHOULD_MOCK_READS_BEFORE_WRITES {
-                                    // all our oracle accesses are implemented via CSRRW
-                                    // with either rd == 0 or rs1 == 0, so if we have
-                                    // rd == 0 here it's just a read
-                                    if rd == 0
-                                    {
-                                        // we consider main intention to be write into CSR,
-                                        // so do NOT perform `read()`
-                                        0
+                        if Config::SUPPORT_STANDARD_CSRS == false {
+                            // read
+                            match csr_number {
+                                NON_DETERMINISM_CSR => {
+                                    // to imporve oracle usability we can try to avoid read
+                                    // if we intend to write, so check oracle config
+                                    ret_val = if ND::SHOULD_MOCK_READS_BEFORE_WRITES {
+                                        // all our oracle accesses are implemented via CSRRW
+                                        // with either rd == 0 or rs1 == 0, so if we have
+                                        // rd == 0 here it's just a read
+                                        if rd == 0
+                                        {
+                                            // we consider main intention to be write into CSR,
+                                            // so do NOT perform `read()`
+                                            0
+                                        } else {
+                                            // it's actually intended to read
+                                            non_determinism_source.read()
+                                        }
                                     } else {
-                                        // it's actually intended to read
                                         non_determinism_source.read()
+                                    };
+                                    tracer.trace_non_determinism_read(ret_val, proc_cycle, cycle_timestamp);
+                                }
+                                _ => {
+                                    // println!("Custom CSR = 0x{:04x} READ at cycle {}", csr_number, proc_cycle);
+                                    csr_processor.process_read(memory_source, tracer, mmu, csr_number, rs1, rs1_as_imm, &mut ret_val, &mut trap, proc_cycle, cycle_timestamp);
+                                    if trap.is_a_trap() {
+                                        break 'cycle_block;
                                     }
-                                } else {
-                                    non_determinism_source.read()
-                                };
-                                tracer.trace_non_determinism_read(ret_val, proc_cycle, cycle_timestamp);
-                            }
-                            _ => {
-                                println!("Custom CSR = 0x{:04x} READ at cycle {}", csr_number, proc_cycle);
-                                csr_processor.process_read(memory_source, tracer, mmu, csr_number, rs1, rs1_as_imm, &mut ret_val, &mut trap, proc_cycle, cycle_timestamp);
-                                if trap.is_a_trap() {
-                                    break 'cycle_block;
                                 }
                             }
-                        }
 
-                        let mut write_val = 0;
-
-                        // update
-                        match funct3 {
-                            1 => write_val = rs1, //CSRRW
-                            2 => write_val = ret_val | rs1, //CSRRS
-                            3 => write_val = ret_val & !rs1, //CSRRC
-                            5 => write_val = rs1_as_imm, //CSRRWI
-                            6 => write_val = ret_val | rs1_as_imm, //CSRRSI
-                            7 => write_val = ret_val & !rs1_as_imm, //CSRRCI
-                            _ => {}
-                        }
-
-                        match csr_number {
-                            0x180 => {
-                                // satp
-                                mmu.write_sapt(write_val, current_privilege_mode, &mut trap);
-                                if trap.is_a_trap() {
-                                    break 'cycle_block;
+                            let write_val;
+                            // update
+                            if Config::SUPPORT_ONLY_CSRRW == false {
+                                match funct3 {
+                                    1 => write_val = rs1, //CSRRW
+                                    2 => write_val = ret_val | rs1, //CSRRS
+                                    3 => write_val = ret_val & !rs1, //CSRRC
+                                    5 => write_val = rs1_as_imm, //CSRRWI
+                                    6 => write_val = ret_val | rs1_as_imm, //CSRRSI
+                                    7 => write_val = ret_val & !rs1_as_imm, //CSRRCI
+                                    _ => {
+                                        trap = TrapReason::IllegalInstruction;
+                                        break 'cycle_block;
+                                    }
                                 }
-                            },
-                            0x300 => self.machine_mode_trap_data.state.status = write_val, // mstatus
-                            0x304 => self.machine_mode_trap_data.state.ie = write_val, // mie
-                            0x305 => self.machine_mode_trap_data.setup.tvec = write_val, // mtvec
-                            0x340 => self.machine_mode_trap_data.handling.scratch = write_val, // mscratch
-                            0x341 => self.machine_mode_trap_data.handling.epc = write_val, // mepc
-                            0x342 => self.machine_mode_trap_data.handling.cause = write_val, // mcause
-                            0x343 => self.machine_mode_trap_data.handling.tval = write_val, // mtval
-                            0x344 => self.machine_mode_trap_data.state.ip = write_val, // mip
-                            NON_DETERMINISM_CSR => {
-                                if ND::SHOULD_IGNORE_WRITES_AFTER_READS {
-                                    // if we have rs1 == 0 then we should ignore write into CSR,
-                                    // as our main intension was to read
-                                    if rs1_as_imm == 0 // index of rs1
-                                    {
-                                        // do nothing
+                            } else {
+                                match funct3 {
+                                    1 => write_val = rs1, //CSRRW
+                                    _ => {
+                                        trap = TrapReason::IllegalInstruction;
+                                        break 'cycle_block;
+                                    }
+                                }
+                            }
+
+                            match csr_number {
+                                NON_DETERMINISM_CSR => {
+                                    if ND::SHOULD_IGNORE_WRITES_AFTER_READS {
+                                        // if we have rs1 == 0 then we should ignore write into CSR,
+                                        // as our main intension was to read
+                                        if rs1_as_imm == 0 // index of rs1
+                                        {
+                                            // do nothing
+                                        } else {
+                                            non_determinism_source.write_with_memory_access(&*memory_source, write_val);
+                                        }
                                     } else {
                                         non_determinism_source.write_with_memory_access(&*memory_source, write_val);
                                     }
-                                } else {
-                                    non_determinism_source.write_with_memory_access(&*memory_source, write_val);
+                                }
+                                _ => {
+                                    // let t = CSR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                                    // println!("Custom CSR = 0x{:04x} WRITE at cycle {}, total: {}", csr_number, proc_cycle, t + 1);
+                                    csr_processor.process_write(memory_source, tracer, mmu, csr_number, rs1, rs1_as_imm, &mut trap, proc_cycle, cycle_timestamp);
+                                    if trap.is_a_trap() {
+                                        break 'cycle_block;
+                                    }
                                 }
                             }
-                            _ => {
-                                let t = CSR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-                                println!("Custom CSR = 0x{:04x} WRITE at cycle {}, total: {}", csr_number, proc_cycle, t + 1);
-                                csr_processor.process_write(memory_source, tracer, mmu, csr_number, rs1, rs1_as_imm, &mut trap, proc_cycle, cycle_timestamp);
-                                if trap.is_a_trap() {
-                                    break 'cycle_block;
+                        } else {
+                            // read
+                            match csr_number {
+                                0x180 => {
+                                    // satp
+                                    ret_val = mmu.read_sapt(current_privilege_mode, &mut trap);
+                                    if trap.is_a_trap() {
+                                        break 'cycle_block;
+                                    }
+                                },
+                                0x300 => ret_val = self.machine_mode_trap_data.state.status, // mstatus
+                                //0x301 => ret_val = 0b01_00_0000_0001_0000_0001_0001_0000_0000u32, //misa (I + M + usemode)
+                                0x304 => ret_val = self.machine_mode_trap_data.state.ie, // mie
+                                0x305 => ret_val = self.machine_mode_trap_data.setup.tvec, // mtvec
+                                0x340 => ret_val = self.machine_mode_trap_data.handling.scratch, // mscratch
+                                0x341 => ret_val = self.machine_mode_trap_data.handling.epc, // mepc
+                                0x342 => ret_val = self.machine_mode_trap_data.handling.cause, // mcause
+                                0x343 => ret_val = self.machine_mode_trap_data.handling.tval, // mtval
+                                0x344 => ret_val = self.machine_mode_trap_data.state.ip, // mip
+                                //0xc00 => ret_val = self.cycle_counter as u32, // cycle
+                                //0xf11 => ret_val = 0, // vendor ID, will come up later on,
+                                NON_DETERMINISM_CSR => {
+                                    // to imporve oracle usability we can try to avoid read
+                                    // if we intend to write, so check oracle config
+                                    ret_val = if ND::SHOULD_MOCK_READS_BEFORE_WRITES {
+                                        // all our oracle accesses are implemented via CSRRW
+                                        // with either rd == 0 or rs1 == 0, so if we have
+                                        // rd == 0 here it's just a read
+                                        if rd == 0
+                                        {
+                                            // we consider main intention to be write into CSR,
+                                            // so do NOT perform `read()`
+                                            0
+                                        } else {
+                                            // it's actually intended to read
+                                            non_determinism_source.read()
+                                        }
+                                    } else {
+                                        non_determinism_source.read()
+                                    };
+                                    tracer.trace_non_determinism_read(ret_val, proc_cycle, cycle_timestamp);
+                                }
+                                _ => {
+                                    // println!("Custom CSR = 0x{:04x} READ at cycle {}", csr_number, proc_cycle);
+                                    csr_processor.process_read(memory_source, tracer, mmu, csr_number, rs1, rs1_as_imm, &mut ret_val, &mut trap, proc_cycle, cycle_timestamp);
+                                    if trap.is_a_trap() {
+                                        break 'cycle_block;
+                                    }
+                                }
+                            }
+
+                            let write_val;
+                            // update
+                            if Config::SUPPORT_ONLY_CSRRW == false {
+                                match funct3 {
+                                    1 => write_val = rs1, //CSRRW
+                                    2 => write_val = ret_val | rs1, //CSRRS
+                                    3 => write_val = ret_val & !rs1, //CSRRC
+                                    5 => write_val = rs1_as_imm, //CSRRWI
+                                    6 => write_val = ret_val | rs1_as_imm, //CSRRSI
+                                    7 => write_val = ret_val & !rs1_as_imm, //CSRRCI
+                                    _ => {
+                                        trap = TrapReason::IllegalInstruction;
+                                        break 'cycle_block;
+                                    }
+                                }
+                            } else {
+                                match funct3 {
+                                    1 => write_val = rs1, //CSRRW
+                                    _ => {
+                                        trap = TrapReason::IllegalInstruction;
+                                        break 'cycle_block;
+                                    }
+                                }
+                            }
+
+                            match csr_number {
+                                0x180 => {
+                                    // satp
+                                    mmu.write_sapt(write_val, current_privilege_mode, &mut trap);
+                                    if trap.is_a_trap() {
+                                        break 'cycle_block;
+                                    }
+                                },
+                                0x300 => self.machine_mode_trap_data.state.status = write_val, // mstatus
+                                0x304 => self.machine_mode_trap_data.state.ie = write_val, // mie
+                                0x305 => self.machine_mode_trap_data.setup.tvec = write_val, // mtvec
+                                0x340 => self.machine_mode_trap_data.handling.scratch = write_val, // mscratch
+                                0x341 => self.machine_mode_trap_data.handling.epc = write_val, // mepc
+                                0x342 => self.machine_mode_trap_data.handling.cause = write_val, // mcause
+                                0x343 => self.machine_mode_trap_data.handling.tval = write_val, // mtval
+                                0x344 => self.machine_mode_trap_data.state.ip = write_val, // mip
+                                NON_DETERMINISM_CSR => {
+                                    if ND::SHOULD_IGNORE_WRITES_AFTER_READS {
+                                        // if we have rs1 == 0 then we should ignore write into CSR,
+                                        // as our main intension was to read
+                                        if rs1_as_imm == 0 // index of rs1
+                                        {
+                                            // do nothing
+                                        } else {
+                                            non_determinism_source.write_with_memory_access(&*memory_source, write_val);
+                                        }
+                                    } else {
+                                        non_determinism_source.write_with_memory_access(&*memory_source, write_val);
+                                    }
+                                }
+                                _ => {
+                                    // let t = CSR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                                    // println!("Custom CSR = 0x{:04x} WRITE at cycle {}, total: {}", csr_number, proc_cycle, t + 1);
+                                    csr_processor.process_write(memory_source, tracer, mmu, csr_number, rs1, rs1_as_imm, &mut trap, proc_cycle, cycle_timestamp);
+                                    if trap.is_a_trap() {
+                                        break 'cycle_block;
+                                    }
                                 }
                             }
                         }
-
                         // and writeback
                     } else if funct3 == 0b000 {
-                        // SYSTEM
-                        rd = 0;
-                        // mainly we support WFI, MRET, ECALL and EBREAK
-                        if csr_number == 0x105 {
-                            println!("WFI: proc_cycle: {:?}, pc = {}, opcode = 0x{:08x}", proc_cycle, pc, instr);
-                            self.extra_flags.set_wait_for_interrupt_bit();
-                            self.pc = pc.wrapping_add(4u32);
-                            return;
-                        } else if csr_number == 0x302 {
-                            // MRET
-                            let existing_mstatus = self.machine_mode_trap_data.state.status;
-                            let previous_privilege = MStatusRegister::mpp(existing_mstatus);
-                            // MRET then in mstatus/mstatush sets MPV=0, MPP=0,
-                            // MIE=MPIE, and MPIE=1. Lastly, MRET sets the privilege mode as previously determined, and
-                            // sets pc=mepc.
-                            MStatusRegister::clear_mpp(&mut self.machine_mode_trap_data.state.status);
-                            MStatusRegister::clear_mprv(&mut self.machine_mode_trap_data.state.status);
-                            let mpie = MStatusRegister::mpie_aligned_bit(self.machine_mode_trap_data.state.status);
-                            MStatusRegister::set_mie_to_value(&mut self.machine_mode_trap_data.state.status, mpie);
-                            MStatusRegister::set_mpie(&mut self.machine_mode_trap_data.state.status);
+                        // TODO: add to configuration later
+                        trap = TrapReason::IllegalInstruction;
+                        break 'cycle_block;
 
-                            // set privilege
-                            self.extra_flags.set_mode_raw(Mode::User.as_register_value() | previous_privilege);
-                            pc = self.machine_mode_trap_data.handling.epc.wrapping_sub(4u32);
-                        } else {
-                            match csr_number {
-                                0 => {
-                                    // ECALL
-                                    trap = match current_privilege_mode {
-                                        Mode::Machine => TrapReason::EnvironmentCallFromMMode,
-                                        Mode::User => TrapReason::EnvironmentCallFromUMode,
-                                        _ => TrapReason::IllegalInstruction,
-                                    };
+                        // // SYSTEM
+                        // rd = 0;
+                        // // mainly we support WFI, MRET, ECALL and EBREAK
+                        // if csr_number == 0x105 {
+                        //     println!("WFI: proc_cycle: {:?}, pc = {}, opcode = 0x{:08x}", proc_cycle, pc, instr);
+                        //     self.extra_flags.set_wait_for_interrupt_bit();
+                        //     self.pc = pc.wrapping_add(4u32);
+                        //     return;
+                        // } else if csr_number == 0x302 {
+                        //     // MRET
+                        //     let existing_mstatus = self.machine_mode_trap_data.state.status;
+                        //     let previous_privilege = MStatusRegister::mpp(existing_mstatus);
+                        //     // MRET then in mstatus/mstatush sets MPV=0, MPP=0,
+                        //     // MIE=MPIE, and MPIE=1. Lastly, MRET sets the privilege mode as previously determined, and
+                        //     // sets pc=mepc.
+                        //     MStatusRegister::clear_mpp(&mut self.machine_mode_trap_data.state.status);
+                        //     MStatusRegister::clear_mprv(&mut self.machine_mode_trap_data.state.status);
+                        //     let mpie = MStatusRegister::mpie_aligned_bit(self.machine_mode_trap_data.state.status);
+                        //     MStatusRegister::set_mie_to_value(&mut self.machine_mode_trap_data.state.status, mpie);
+                        //     MStatusRegister::set_mpie(&mut self.machine_mode_trap_data.state.status);
 
-                                    break 'cycle_block;
-                                },
-                                1 => {
-                                    // EBREAK
-                                    trap = TrapReason::Breakpoint;
-                                    break 'cycle_block;
-                                },
-                                _ => {
-                                    trap = TrapReason::IllegalInstruction;
-                                    break 'cycle_block;
-                                }
-                            }
-                        }
+                        //     // set privilege
+                        //     self.extra_flags.set_mode_raw(Mode::User.as_register_value() | previous_privilege);
+                        //     pc = self.machine_mode_trap_data.handling.epc.wrapping_sub(4u32);
+                        // } else {
+                        //     match csr_number {
+                        //         0 => {
+                        //             // ECALL
+                        //             trap = match current_privilege_mode {
+                        //                 Mode::Machine => TrapReason::EnvironmentCallFromMMode,
+                        //                 Mode::User => TrapReason::EnvironmentCallFromUMode,
+                        //                 _ => TrapReason::IllegalInstruction,
+                        //             };
+
+                        //             break 'cycle_block;
+                        //         },
+                        //         1 => {
+                        //             // EBREAK
+                        //             trap = TrapReason::Breakpoint;
+                        //             break 'cycle_block;
+                        //         },
+                        //         _ => {
+                        //             trap = TrapReason::IllegalInstruction;
+                        //             break 'cycle_block;
+                        //         }
+                        //     }
+                        // }
                     } else if funct3 & ZIMOP_MASK == ZIMOP_MASK {
                         const MOP_FUNCT7_TEST: u32 = 0b1000001u32;
                         let funct7 = RTypeOpcode::funct7(instr);
                         if funct7 & MOP_FUNCT7_TEST == MOP_FUNCT7_TEST {
-                            let mop_number = ((funct7 & 0b110) >> 1) | ((funct7 & 0b100000) >> 5);
-                            const MODULUS_U32: u32 = 0x7fffffffu32;
-                            const MODULUS_U64: u64 = 0x7fffffffu64;
-                            let operand_1 = rs1;
-                            let operand_2 = rs2;
-                            match mop_number {
-                                0 => {
-                                    ret_val = operand_1.wrapping_add(operand_2) % MODULUS_U32;
-                                },
-                                1 => {
-                                    ret_val = MODULUS_U32.wrapping_add(operand_1).wrapping_sub(operand_2) % MODULUS_U32;
-                                },
-                                2 => {
-                                    ret_val = (((operand_1 as u64) * (operand_2 as u64)) % MODULUS_U64) as u32;
+                            if Config::SUPPORT_MOPS {
+                                let mop_number = ((funct7 & 0b110) >> 1) | ((funct7 & 0b100000) >> 5);
+                                const MODULUS_U32: u32 = 0x7fffffffu32;
+                                const MODULUS_U64: u64 = 0x7fffffffu64;
+                                let operand_1 = rs1;
+                                let operand_2 = rs2;
+                                match mop_number {
+                                    0 => {
+                                        ret_val = operand_1.wrapping_add(operand_2) % MODULUS_U32;
+                                    },
+                                    1 => {
+                                        ret_val = MODULUS_U32.wrapping_add(operand_1).wrapping_sub(operand_2) % MODULUS_U32;
+                                    },
+                                    2 => {
+                                        ret_val = (((operand_1 as u64) * (operand_2 as u64)) % MODULUS_U64) as u32;
+                                    }
+                                    _ => {
+                                        trap = TrapReason::IllegalInstruction;
+                                        break 'cycle_block;
+                                    }
                                 }
-                                _ => {
-                                    trap = TrapReason::IllegalInstruction;
-                                    break 'cycle_block;
-                                }
+                            } else {
+                                trap = TrapReason::IllegalInstruction;
+                                break 'cycle_block;
                             }
-
                         } else {
                             trap = TrapReason::IllegalInstruction;
                             break 'cycle_block;
@@ -1014,33 +1169,41 @@ impl RiscV32State {
                 trap, pc, proc_cycle, instr
             );
 
-            let trap = trap.as_register_value();
-            if trap & INTERRUPT_MASK != 0 {
-                // interrupt, not a trap. Always machine level in our system
-                self.machine_mode_trap_data.handling.cause = trap;
-                self.machine_mode_trap_data.handling.tval = 0;
-                pc = pc.wrapping_add(4u32); // PC points to where the PC will return!
+            if Config::HANDLE_EXCEPTIONS == false {
+                panic!("Simulator encountered an exception");
             } else {
-                self.machine_mode_trap_data.handling.cause = trap;
-                // TODO: here we have a freedom of what to put into tval. We place opcode value now, because PC will be placed into EPC below
-                self.machine_mode_trap_data.handling.tval = instr;
+                let trap = trap.as_register_value();
+                if trap & INTERRUPT_MASK != 0 {
+                    // interrupt, not a trap. Always machine level in our system
+                    self.machine_mode_trap_data.handling.cause = trap;
+                    self.machine_mode_trap_data.handling.tval = 0;
+                    pc = pc.wrapping_add(4u32); // PC points to where the PC will return!
+                } else {
+                    self.machine_mode_trap_data.handling.cause = trap;
+                    // TODO: here we have a freedom of what to put into tval. We place opcode value now, because PC will be placed into EPC below
+                    self.machine_mode_trap_data.handling.tval = instr;
+                }
+                // println!("Trapping at pc = 0x{:08x} into PC = 0x{:08x}. MECP is set to 0x{:08x}", pc, self.machine_mode_trap_data.setup.tvec, pc);
+                // self.pretty_dump();
+                // self.stack_dump(memory, mmu);
+
+                self.machine_mode_trap_data.handling.epc = pc;
+                // update machine status register to reflect previous privilege
+
+                // On an interrupt, the system moves current MIE into MPIE
+                let mie =
+                    MStatusRegister::mie_aligned_bit(self.machine_mode_trap_data.state.status);
+                MStatusRegister::set_mpie_to_value(
+                    &mut self.machine_mode_trap_data.state.status,
+                    mie,
+                );
+
+                // go to trap vector
+                pc = self.machine_mode_trap_data.setup.tvec;
+
+                // Enter machine mode
+                self.extra_flags.set_mode(Mode::Machine);
             }
-            // println!("Trapping at pc = 0x{:08x} into PC = 0x{:08x}. MECP is set to 0x{:08x}", pc, self.machine_mode_trap_data.setup.tvec, pc);
-            // self.pretty_dump();
-            // self.stack_dump(memory, mmu);
-
-            self.machine_mode_trap_data.handling.epc = pc;
-            // update machine status register to reflect previous privilege
-
-            // On an interrupt, the system moves current MIE into MPIE
-            let mie = MStatusRegister::mie_aligned_bit(self.machine_mode_trap_data.state.status);
-            MStatusRegister::set_mpie_to_value(&mut self.machine_mode_trap_data.state.status, mie);
-
-            // go to trap vector
-            pc = self.machine_mode_trap_data.setup.tvec;
-
-            // Enter machine mode
-            self.extra_flags.set_mode(Mode::Machine);
         }
 
         self.pc = pc;

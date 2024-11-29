@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use crate::cycle::IMStandardIsaConfig;
+use crate::cycle::MachineConfig;
 use crate::{
     abstractions::{
         memory::MemorySource, non_determinism::NonDeterminismCSRSource, tracer::Tracer,
@@ -11,11 +13,11 @@ use crate::{
 
 use self::diag::Profiler;
 
-pub(crate) struct Simulator<MS, TR, MMU, ND>
+pub(crate) struct Simulator<MS, TR, MMU, ND, C: MachineConfig = IMStandardIsaConfig>
 where
     MS: MemorySource,
-    TR: Tracer,
-    MMU: MMUImplementation<MS, TR>,
+    TR: Tracer<C>,
+    MMU: MMUImplementation<MS, TR, C>,
     ND: NonDeterminismCSRSource<MS>,
 {
     pub(crate) memory_source: MS,
@@ -23,22 +25,24 @@ where
     pub(crate) mmu: MMU,
     pub(crate) non_determinism_source: ND,
 
-    pub(crate) state: RiscV32State,
+    pub(crate) state: RiscV32State<C>,
     cycles: usize,
 
     profiler: Option<Profiler>,
 }
 
-impl<MS, TR, MMU, ND> Simulator<MS, TR, MMU, ND>
+impl<MS, TR, MMU, ND, C> Simulator<MS, TR, MMU, ND, C>
 where
     MS: MemorySource,
-    TR: Tracer,
-    MMU: MMUImplementation<MS, TR>,
+    TR: Tracer<C>,
+    MMU: MMUImplementation<MS, TR, C>,
     ND: NonDeterminismCSRSource<MS>,
+    C: MachineConfig,
+    [(); { C::SUPPORT_LOAD_LESS_THAN_WORD } as usize]:,
 {
     pub(crate) fn new(
         config: SimulatorConfig,
-        state: RiscV32State,
+        state: RiscV32State<C>,
         memory_source: MS,
         memory_tracer: TR,
         mmu: MMU,
@@ -61,6 +65,7 @@ where
         FnPost: FnMut(&mut Self, usize),
     {
         let mut previous_pc = self.state.pc;
+        let mut end_of_execution_reached = false;
 
         for cycle in 0..self.cycles as usize {
             if let Some(profiler) = self.profiler.as_mut() {
@@ -75,7 +80,8 @@ where
 
             fn_pre(self, cycle);
 
-            self.state.cycle(
+            RiscV32State::<C>::cycle(
+                &mut self.state,
                 &mut self.memory_source,
                 &mut self.memory_tracer,
                 &mut self.mmu,
@@ -86,11 +92,18 @@ where
             fn_post(self, cycle);
 
             if self.state.pc == previous_pc {
+                end_of_execution_reached = true;
                 println!("Took {} cycles to finish", cycle);
                 break;
             }
             previous_pc = self.state.pc;
         }
+
+        assert!(
+            end_of_execution_reached,
+            "program failed to each the end of execution over {} cycles",
+            self.cycles
+        );
 
         if let Some(profiler) = self.profiler.as_mut() {
             profiler.print_stats();
@@ -164,6 +177,7 @@ impl ProfilerConfig {
 }
 
 mod diag {
+    use crate::cycle::MachineConfig;
     use std::{
         collections::HashMap,
         hash::Hasher,
@@ -235,34 +249,36 @@ mod diag {
             }
         }
 
-        pub(crate) fn pre_cycle<MS, TR, MMU>(
+        pub(crate) fn pre_cycle<MS, TR, MMU, C>(
             &mut self,
-            state: &RiscV32State,
+            state: &RiscV32State<C>,
             memory_source: &mut MS,
             memory_tracer: &mut TR,
             mmu: &mut MMU,
             cycle: u32,
         ) where
             MS: MemorySource,
-            TR: Tracer,
-            MMU: MMUImplementation<MS, TR>,
+            TR: Tracer<C>,
+            MMU: MMUImplementation<MS, TR, C>,
+            C: MachineConfig,
         {
             if cycle % self.frequency_recip == 0 {
                 self.collect_stacktrace(state, memory_source, memory_tracer, mmu, cycle);
             }
         }
 
-        fn collect_stacktrace<MS, TR, MMU>(
+        fn collect_stacktrace<MS, TR, MMU, C>(
             &mut self,
-            state: &RiscV32State,
+            state: &RiscV32State<C>,
             memory_source: &mut MS,
             memory_tracer: &mut TR,
             mmu: &mut MMU,
             cycle: u32,
         ) where
             MS: MemorySource,
-            TR: Tracer,
-            MMU: MMUImplementation<MS, TR>,
+            TR: Tracer<C>,
+            MMU: MMUImplementation<MS, TR, C>,
+            C: MachineConfig,
         {
             self.stats.samples_total += 1;
 
@@ -298,7 +314,7 @@ mod diag {
                     break;
                 }
 
-                let addr = mem_read(
+                let addr = mem_read::<_, _, _, false>(
                     memory_source,
                     memory_tracer,
                     fpp - 4,
@@ -309,7 +325,7 @@ mod diag {
                     &mut trap,
                 );
 
-                let next = mem_read(
+                let next = mem_read::<_, _, _, false>(
                     memory_source,
                     memory_tracer,
                     fpp - 8,
