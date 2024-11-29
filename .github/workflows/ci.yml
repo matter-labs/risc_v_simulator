@@ -23,3 +23,21 @@ jobs:
         run: cargo build --verbose
       - name: Run unit tests
         run: cargo test
+      - name: Compile 
+        run: cargo build --features delegation --verbose 
+  tests_delegations:
+    name: tests_delegations
+    runs-on: [matterlabs-ci-runner]
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rustflags: ""
+      - name: Setup
+        run: |
+          rustup set profile minimal
+          git config --global --add url."https://${{ secrets.ZKSYNC_ADMIN_BOT_ORG_REPO_WRITE }}:x-oauth-basic@github.com/".insteadOf https://github.com/
+      - name: Compile 
+        run: cargo build --features delegation --verbose 
+      - name: Compile 
+        run: cargo test --features delegation 
