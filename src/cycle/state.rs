@@ -878,7 +878,7 @@ where
                                 }
                                 _ => {
                                     // println!("Custom CSR = 0x{:04x} READ at cycle {}", csr_number, proc_cycle);
-                                    csr_processor.process_read(memory_source, tracer, mmu, csr_number, rs1, rs1_as_imm, &mut ret_val, &mut trap, proc_cycle, cycle_timestamp);
+                                    csr_processor.process_read(self, memory_source, non_determinism_source, tracer, mmu, csr_number, rs1, rs1_as_imm, &mut ret_val, &mut trap, proc_cycle, cycle_timestamp);
                                     if trap.is_a_trap() {
                                         break 'cycle_block;
                                     }
@@ -928,7 +928,7 @@ where
                                 _ => {
                                     // let t = CSR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
                                     // println!("Custom CSR = 0x{:04x} WRITE at cycle {}, total: {}", csr_number, proc_cycle, t + 1);
-                                    csr_processor.process_write(memory_source, tracer, mmu, csr_number, rs1, rs1_as_imm, &mut trap, proc_cycle, cycle_timestamp);
+                                    csr_processor.process_write(self, memory_source, non_determinism_source, tracer, mmu, csr_number, rs1, rs1_as_imm, &mut trap, proc_cycle, cycle_timestamp);
                                     if trap.is_a_trap() {
                                         break 'cycle_block;
                                     }
@@ -978,7 +978,7 @@ where
                                 }
                                 _ => {
                                     // println!("Custom CSR = 0x{:04x} READ at cycle {}", csr_number, proc_cycle);
-                                    csr_processor.process_read(memory_source, tracer, mmu, csr_number, rs1, rs1_as_imm, &mut ret_val, &mut trap, proc_cycle, cycle_timestamp);
+                                    csr_processor.process_read(self, memory_source, non_determinism_source, tracer, mmu, csr_number, rs1, rs1_as_imm, &mut ret_val, &mut trap, proc_cycle, cycle_timestamp);
                                     if trap.is_a_trap() {
                                         break 'cycle_block;
                                     }
@@ -1043,7 +1043,7 @@ where
                                 _ => {
                                     // let t = CSR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
                                     // println!("Custom CSR = 0x{:04x} WRITE at cycle {}, total: {}", csr_number, proc_cycle, t + 1);
-                                    csr_processor.process_write(memory_source, tracer, mmu, csr_number, rs1, rs1_as_imm, &mut trap, proc_cycle, cycle_timestamp);
+                                    csr_processor.process_write(self, memory_source, non_determinism_source, tracer, mmu, csr_number, rs1, rs1_as_imm, &mut trap, proc_cycle, cycle_timestamp);
                                     if trap.is_a_trap() {
                                         break 'cycle_block;
                                     }

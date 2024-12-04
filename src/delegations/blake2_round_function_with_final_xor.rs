@@ -178,6 +178,7 @@ pub fn blake2_round_function_with_xor<
         BLAKE2_ROUND_FUNCTION_WITH_XOR_ACCESS_ID,
         (mem_offset >> 16) as u16,
         &accesses,
+        &[],
         proc_cycle,
         cycle_timestamp,
     );

@@ -114,6 +114,7 @@ pub trait Tracer<C: MachineConfig> {
         _access_id: u32,
         _phys_address_high: u16,
         _accesses: &[BatchAccessPartialData],
+        _non_determinism_accesses: &[u32],
         _proc_cycle: u32,
         _cycle_timestamp: u32,
     ) {

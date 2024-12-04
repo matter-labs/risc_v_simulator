@@ -1,6 +1,8 @@
 use std::fmt::Debug;
 
+use crate::abstractions::non_determinism::NonDeterminismCSRSource;
 use crate::abstractions::*;
+use crate::cycle::state::RiscV32State;
 use crate::cycle::status_registers::TrapReason;
 use crate::mmu::MMUImplementation;
 
@@ -9,11 +11,14 @@ pub trait CustomCSRProcessor: 'static + Clone + Debug {
     fn process_read<
         M: MemorySource,
         TR: Tracer<C>,
+        ND: NonDeterminismCSRSource<M>,
         MMU: MMUImplementation<M, TR, C>,
         C: MachineConfig,
     >(
         &mut self,
+        state: &mut RiscV32State<C>,
         memory_source: &mut M,
+        non_determinism_source: &mut ND,
         tracer: &mut TR,
         mmu: &mut MMU,
         csr_index: u32,
@@ -27,11 +32,14 @@ pub trait CustomCSRProcessor: 'static + Clone + Debug {
     fn process_write<
         M: MemorySource,
         TR: Tracer<C>,
+        ND: NonDeterminismCSRSource<M>,
         MMU: MMUImplementation<M, TR, C>,
         C: MachineConfig,
     >(
         &mut self,
+        state: &mut RiscV32State<C>,
         memory_source: &mut M,
+        non_determinism_source: &mut ND,
         tracer: &mut TR,
         mmu: &mut MMU,
         csr_index: u32,
@@ -51,33 +59,40 @@ impl CustomCSRProcessor for NoExtraCSRs {
     fn process_read<
         M: MemorySource,
         TR: Tracer<C>,
+        ND: NonDeterminismCSRSource<M>,
         MMU: MMUImplementation<M, TR, C>,
         C: MachineConfig,
     >(
         &mut self,
+        _state: &mut RiscV32State<C>,
         _memory_source: &mut M,
+        _non_determinism_source: &mut ND,
         _tracer: &mut TR,
         _mmu: &mut MMU,
         _csr_index: u32,
         _rs1_value: u32,
         _zimm: u32,
         ret_val: &mut u32,
-        _trap: &mut TrapReason,
+        trap: &mut TrapReason,
         _proc_cycle: u32,
         _cycle_timestamp: u32,
     ) {
         *ret_val = 0;
+        *trap = TrapReason::IllegalInstruction;
     }
 
     #[inline(always)]
     fn process_write<
         M: MemorySource,
         TR: Tracer<C>,
+        ND: NonDeterminismCSRSource<M>,
         MMU: MMUImplementation<M, TR, C>,
         C: MachineConfig,
     >(
         &mut self,
+        _state: &mut RiscV32State<C>,
         _memory_source: &mut M,
+        _non_determinism_source: &mut ND,
         _tracer: &mut TR,
         _mmu: &mut MMU,
         _csr_index: u32,

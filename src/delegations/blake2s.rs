@@ -128,6 +128,7 @@ pub fn blake2s_round_function<
         BLAKE2S_ACCESS_ID,
         (mem_offset >> 16) as u16,
         &accesses,
+        &[],
         proc_cycle,
         cycle_timestamp,
     );
